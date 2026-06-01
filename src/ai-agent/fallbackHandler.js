@@ -35,6 +35,10 @@ function handleAPIError(error) {
 // Quick check using the browser's built-in online status before attempting an
 // API call. Avoids unnecessary fetch attempts when the user is offline.
 function isNetworkAvailable() {
+  // navigator.onLine is a browser-only API
+  // In Node.js testing environment, navigator is undefined — default to true
+  if (typeof navigator === "undefined") return true
+  if (typeof navigator.onLine === "undefined") return true
   return navigator.onLine
 }
 
