@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentrio UI Test — All Risk Levels</title>
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────────────── */
+    *, *::before, *::after {
+      margin: 0; padding: 0; box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      font-smoothing: antialiased;
+    }
+
+    /* ── Animated background ─────────────────────────────────────────────────── */
+    @keyframes bg-shift {
+      0%   { background-position: 0% 50%;   }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%;   }
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(
+        135deg,
+        #0a0f1e 0%,
+        #0f172a 20%,
+        #0f3460 50%,
+        #0b1d3a 80%,
+        #0a1628 100%
+      );
+      background-size: 300% 300%;
+      animation: bg-shift 8s ease infinite;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #f8fafc;
+      padding: 32px 24px 80px;
+      transition: all 0.2s ease;
+    }
+
+    /* ── Page header ─────────────────────────────────────────────────────────── */
+    .page-header {
+      text-align: center;
+      margin-bottom: 48px;
+      opacity: 0;
+      transform: translateY(-16px);
+      animation: header-drop 0.7s cubic-bezier(0.34,1.56,0.64,1) 0.1s forwards;
+    }
+    @keyframes header-drop {
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .page-header h1 {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      background: linear-gradient(135deg, #ffffff 0%, #00b4d8 60%, #7dd3fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .page-header p {
+      margin-top: 8px;
+      color: rgba(255,255,255,0.45);
+      font-size: 14px;
+      letter-spacing: 0.01em;
+    }
+
+    /* ── Section headings (IntersectionObserver fade-in) ─────────────────────── */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #00b4d8;
+      margin: 44px 0 18px;
+      padding-left: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      /* Start hidden — JS reveals on scroll */
+      opacity: 0;
+      transform: translateX(-12px);
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.34,1.56,0.64,1);
+      will-change: transform, opacity;
+    }
+    .section-title.revealed {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(0,180,216,0.3), rgba(255,255,255,0.04));
+    }
+
+    /* ── Cards grid ──────────────────────────────────────────────────────────── */
+    .cards-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: flex-start;
+    }
+
+    /* ── Card wrapper ────────────────────────────────────────────────────────── */
+    .card-wrapper {
+      position: relative;
+      width: 390px;
+      height: 440px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.07);
+      overflow: hidden;
+      flex-shrink: 0;
+      /* Hover lift */
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+      will-change: transform, box-shadow;
+      cursor: default;
+    }
+    .card-wrapper:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.28);
+    }
+    /* Risk-coloured border glow on hover — set via JS data attr */
+    .card-wrapper[data-risk="safe"]:hover     { border-color: rgba(22,163,74,0.4);   }
+    .card-wrapper[data-risk="low"]:hover      { border-color: rgba(202,138,4,0.4);   }
+    .card-wrapper[data-risk="medium"]:hover   { border-color: rgba(234,88,12,0.4);   }
+    .card-wrapper[data-risk="high"]:hover     { border-color: rgba(220,38,38,0.4);   }
+    .card-wrapper[data-risk="critical"]:hover { border-color: rgba(127,29,29,0.5);   }
+
+    .card-label {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.85);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+
+    /* ── Safe card section wrapper ───────────────────────────────────────────── */
+    .safe-preview-box {
+      position: relative;
+      width: 310px;
+      height: 90px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.07);
+      overflow: hidden;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    }
+    .safe-preview-box:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(22,163,74,0.12);
+      border-color: rgba(22,163,74,0.25);
+    }
+
+    /* ── Trigger buttons ─────────────────────────────────────────────────────── */
+    .trigger-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .trigger-btn {
+      position: relative;
+      padding: 9px 18px;
+      border-radius: 9px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.07);
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+      will-change: transform, box-shadow;
+      overflow: hidden;
+      /* GPU layer */
+      transform: translateZ(0);
+    }
+    .trigger-btn:hover {
+      background: rgba(255,255,255,0.13);
+      transform: translateY(-2px) translateZ(0);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    }
+    .trigger-btn:active {
+      transform: scale(0.97) translateZ(0);
+      transition: transform 0.06s ease;
+    }
+
+    /* Coloured variants */
+    .trigger-btn.safe     { border-color: rgba(22,163,74,0.6);   color: #4ade80; }
+    .trigger-btn.low      { border-color: rgba(202,138,4,0.6);   color: #fde047; }
+    .trigger-btn.medium   { border-color: rgba(234,88,12,0.6);   color: #fb923c; }
+    .trigger-btn.high     { border-color: rgba(220,38,38,0.6);   color: #f87171; }
+    .trigger-btn.critical { border-color: rgba(127,29,29,0.7);   color: #fca5a5; }
+
+    .trigger-btn.safe:hover     { box-shadow: 0 0 16px rgba(22,163,74,0.3);   background: rgba(22,163,74,0.1);  }
+    .trigger-btn.low:hover      { box-shadow: 0 0 16px rgba(202,138,4,0.3);   background: rgba(202,138,4,0.1);  }
+    .trigger-btn.medium:hover   { box-shadow: 0 0 16px rgba(234,88,12,0.3);   background: rgba(234,88,12,0.1);  }
+    .trigger-btn.high:hover     { box-shadow: 0 0 16px rgba(220,38,38,0.3);   background: rgba(220,38,38,0.1);  }
+    .trigger-btn.critical:hover { box-shadow: 0 0 16px rgba(127,29,29,0.35);  background: rgba(127,29,29,0.12); }
+
+    /* Ring pulse on click */
+    @keyframes ring-pulse {
+      0%   { transform: scale(1);   opacity: 0.9; }
+      80%  { transform: scale(2.8); opacity: 0;   }
+      100% { transform: scale(2.8); opacity: 0;   }
+    }
+    .btn-ring {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 100%; height: 100%;
+      transform: translate(-50%, -50%);
+      border-radius: 9px;
+      pointer-events: none;
+      animation: ring-pulse 0.55s cubic-bezier(0.22,1,0.36,1) forwards;
+    }
+
+    /* ── Console log ─────────────────────────────────────────────────────────── */
+    #console-log {
+      margin-top: 20px;
+      background: rgba(0,0,0,0.45);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 11px;
+      padding: 14px 16px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      color: #4ade80;
+      min-height: 64px;
+      max-height: 130px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .log-entry {
+      display: flex;
+      gap: 8px;
+      opacity: 0;
+      transform: translateY(8px);
+      animation: log-fade-in 0.3s ease forwards;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .log-entry.fading-out {
+      opacity: 0;
+      transform: translateY(-8px);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    @keyframes log-fade-in {
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .log-entry .log-ts { color: rgba(255,255,255,0.3); flex-shrink: 0; }
+    .log-entry .log-text { overflow: hidden; text-overflow: ellipsis; }
+
+    /* ── Shared keyframes ────────────────────────────────────────────────────── */
+    @keyframes sentrio-spin { to { transform: rotate(360deg); } }
+
+    /* ── CSS ripple ──────────────────────────────────────────────────────────── */
+    @keyframes ripple-expand {
+      from { transform: scale(0); opacity: 0.35; }
+      to   { transform: scale(4); opacity: 0;    }
+    }
+    .ripple-el {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      background: rgba(255,255,255,0.35);
+      width: 80px;
+      height: 80px;
+      margin-top: -40px;
+      margin-left: -40px;
+      animation: ripple-expand 0.5s ease-out forwards;
+    }
+
+    /* ── will-change hints on animated elements ──────────────────────────────── */
+    #sentrio-live-overlay { will-change: contents; }
+
+  </style>
+</head>
+<body>
+
+  <!-- PAGE HEADER -->
+  <div class="page-header">
+    <h1>🛡️ Sentrio UI Test Suite</h1>
+    <p>All risk levels · All components · No extension required</p>
+  </div>
+
+  <!-- SECTION 1: Threat Cards -->
+  <div class="section-title">⚡ Threat Cards — All 5 Risk Levels</div>
+  <div class="cards-grid" id="threat-cards-grid"></div>
+
+  <!-- SECTION 2: Safe Card -->
+  <div class="section-title">✅ Safe Card Preview</div>
+  <div class="safe-preview-box">
+    <div id="safe-card-mount" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
+  </div>
+
+  <!-- SECTION 3: Live Trigger -->
+  <div class="section-title">🎛️ Live Trigger — Overlay Simulation</div>
+  <p style="font-size:13px;color:rgba(255,255,255,0.45);margin-bottom:14px;line-height:1.6;">
+    Click a button to fire a mock <code style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:11px;">chrome.runtime</code> message.
+    The overlay appears in the bottom-right corner of this page.
+  </p>
+  <div class="trigger-row">
+    <button class="trigger-btn safe"     id="btn-safe"     onclick="triggerVerdict('safe',this)">✅ SAFE</button>
+    <button class="trigger-btn low"      id="btn-low"      onclick="triggerVerdict('low',this)">⚠️ LOW RISK</button>
+    <button class="trigger-btn medium"   id="btn-medium"   onclick="triggerVerdict('medium',this)">⚠️ MEDIUM RISK</button>
+    <button class="trigger-btn high"     id="btn-high"     onclick="triggerVerdict('high',this)">🚨 HIGH RISK</button>
+    <button class="trigger-btn critical" id="btn-critical" onclick="triggerVerdict('critical',this)">🔴 CRITICAL</button>
+    <button class="trigger-btn"          id="btn-safecard" onclick="triggerSafeCard(this)">🟢 Show SafeCard</button>
+  </div>
+
+  <!-- Console -->
+  <div id="console-log">
+    <div class="log-entry" style="opacity:1;transform:none;">
+      <span class="log-ts">[ready]</span>
+      <span class="log-text">Test harness loaded. Click a button above to trigger an overlay.</span>
+    </div>
+  </div>
+
+  <!-- Live overlay mount -->
+  <div id="sentrio-live-overlay"></div>
+
+  <!-- React + Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- ── Vanilla JS: chrome mock + helpers ─────────────────────────────────── -->
+  <script>
+    /* ─── Chrome API mock ────────────────────────────────────────────────── */
+    const messageListeners = []
+    window.chrome = {
+      runtime: {
+        onMessage: {
+          addListener:    fn => messageListeners.push(fn),
+          removeListener: fn => { const i=messageListeners.indexOf(fn); if(i>-1)messageListeners.splice(i,1) }
+        },
+        sendMessage: msg => logConsole(`sendMessage → ${msg.type}  ${JSON.stringify(msg.payload)}`)
+      },
+      tabs: {
+        query: (_, cb) => cb([{ url:"https://hnb.lk/personal/accounts", title:"HNB Personal Banking", id:1 }])
+      }
+    }
+
+    /* ─── Mock verdicts ──────────────────────────────────────────────────── */
+    const MOCK_VERDICTS = {
+      safe:     { riskLevel:"safe",     tactic:"Verified Banking Domain",            explanation:"This page belongs to the official HNB Bank domain. All security checks passed. The SSL certificate is valid and the domain was registered over 10 years ago.", recommendation:"proceed", confidence:"high",   isFallback:false },
+      low:      { riskLevel:"low",      tactic:"Minor Domain Inconsistency",         explanation:"The domain closely resembles an official bank but has a slightly unusual subdomain. Proceed carefully and verify the URL bar.",                                  recommendation:"caution", confidence:"medium", isFallback:false },
+      medium:   { riskLevel:"medium",   tactic:"Suspicious SSL Certificate",         explanation:"This page uses a domain-validated certificate issued only 12 days ago. The site structure mimics ComBank Online Banking. Verify this URL before entering credentials.", recommendation:"caution", confidence:"medium", isFallback:false },
+      high:     { riskLevel:"high",     tactic:"Lookalike Domain + New Registration",explanation:"This domain (hnb-secure-login.net) was registered 3 days ago and closely mirrors HNB Bank's official site. This is a common phishing pattern. Do not enter your credentials.", recommendation:"leave", confidence:"high", isFallback:false },
+      critical: { riskLevel:"critical", tactic:"Typosquatting + Authority Impersonation", explanation:"This page is actively impersonating HNB Bank using a cloned login form. The domain (hnb-secure.net) was registered 2 days ago. Our AI agent has high confidence this is a phishing attack. Leave immediately.", recommendation:"leave", confidence:"high", isFallback:false }
+    }
+
+    /* ─── Ring pulse animation on trigger button ─────────────────────────── */
+    const RING_COLORS = {
+      safe:"rgba(22,163,74,0.5)", low:"rgba(202,138,4,0.5)", medium:"rgba(234,88,12,0.5)",
+      high:"rgba(220,38,38,0.5)", critical:"rgba(127,29,29,0.6)", safecard:"rgba(0,180,216,0.4)"
+    }
+    function fireRing(btn, colorKey) {
+      const ring = document.createElement('div')
+      ring.className = 'btn-ring'
+      ring.style.border = `2px solid ${RING_COLORS[colorKey] || RING_COLORS.safe}`
+      ring.style.background = 'transparent'
+      btn.appendChild(ring)
+      setTimeout(()=>ring.remove(), 600)
+    }
+
+    /* ─── CSS ripple on button click ─────────────────────────────────────── */
+    function spawnRipple(btn, e) {
+      const rect = btn.getBoundingClientRect()
+      const r = document.createElement('span')
+      r.className = 'ripple-el'
+      r.style.top  = (e.clientY - rect.top)  + 'px'
+      r.style.left = (e.clientX - rect.left) + 'px'
+      btn.appendChild(r)
+      setTimeout(()=>r.remove(), 520)
+    }
+
+    /* ─── Trigger actions ────────────────────────────────────────────────── */
+    function triggerVerdict(level, btn) {
+      spawnRipple(btn, event)
+      fireRing(btn, level)
+      logConsole(`SHOW_VERDICT → riskLevel: ${level}`)
+      messageListeners.forEach(fn => fn({ type:"SHOW_VERDICT", payload:MOCK_VERDICTS[level] }))
+    }
+    function triggerSafeCard(btn) {
+      spawnRipple(btn, event)
+      fireRing(btn, 'safecard')
+      logConsole('SHOW_SAFE → url: https://hnb.lk')
+      messageListeners.forEach(fn => fn({ type:"SHOW_SAFE", payload:{ url:"https://hnb.lk" } }))
+    }
+
+    /* ─── Animated console log (max 5 lines, fade out oldest) ───────────── */
+    const MAX_LOG = 5
+    function logConsole(text) {
+      const box = document.getElementById('console-log')
+      const entries = box.querySelectorAll('.log-entry')
+      // If at max, fade out & remove the oldest
+      if (entries.length >= MAX_LOG) {
+        const oldest = entries[0]
+        oldest.classList.add('fading-out')
+        setTimeout(() => oldest.remove(), 260)
+      }
+      const ts  = new Date().toLocaleTimeString('en-US',{hour12:false})
+      const row = document.createElement('div')
+      row.className = 'log-entry'
+      row.innerHTML = `<span class="log-ts">[${ts}]</span><span class="log-text">${text}</span>`
+      box.appendChild(row)
+    }
+
+    /* ─── IntersectionObserver: reveal section titles on scroll ─────────── */
+    const sectionObserver = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('revealed'); sectionObserver.unobserve(e.target) } })
+    }, { threshold: 0.3 })
+    // Observe after DOM ready
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.section-title').forEach(el => sectionObserver.observe(el))
+    })
+    // Also kick off immediately for elements already visible
+    setTimeout(() => {
+      document.querySelectorAll('.section-title').forEach(el => sectionObserver.observe(el))
+    }, 100)
+  </script>
+
+  <!-- ── React / JSX components ────────────────────────────────────────────── -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React
+
+    /* ══════════════════════════════════════════════════════════════════════
+       RISK BADGE  — pops in with scale spring 150ms after card appears
+    ══════════════════════════════════════════════════════════════════════ */
+    const RISK_CONFIG = {
+      safe:     { color:"#15803d", bg:"#dcfce7", border:"#86efac", label:"SAFE",        emoji:"✅", glow:"rgba(22,163,74,0.18)"  },
+      low:      { color:"#a16207", bg:"#fef9c3", border:"#fde047", label:"LOW RISK",    emoji:"⚠️", glow:"rgba(202,138,4,0.18)"  },
+      medium:   { color:"#c2410c", bg:"#ffedd5", border:"#fdba74", label:"MEDIUM RISK", emoji:"⚠️", glow:"rgba(234,88,12,0.18)"  },
+      high:     { color:"#b91c1c", bg:"#fee2e2", border:"#fca5a5", label:"HIGH RISK",   emoji:"🚨", glow:"rgba(220,38,38,0.18)"  },
+      critical: { color:"#7f1d1d", bg:"#fecaca", border:"#f87171", label:"CRITICAL",    emoji:"🔴", glow:"rgba(127,29,29,0.22)"  }
+    }
+
+    function RiskBadge({ riskLevel, delay = 0 }) {
+      const [popped, setPopped] = useState(false)
+      useEffect(() => {
+        const t = setTimeout(() => setPopped(true), delay)
+        return () => clearTimeout(t)
+      }, [delay])
+      const c = RISK_CONFIG[riskLevel] || RISK_CONFIG.low
+      return (
+        <div style={{
+          display:"inline-flex", alignItems:"center", gap:"6px",
+          padding:"5px 13px", borderRadius:"999px",
+          backgroundColor:c.bg, color:c.color,
+          fontWeight:"700", fontSize:"12px", letterSpacing:"0.06em",
+          border:`1.5px solid ${c.border}`,
+          boxShadow:`0 0 0 4px ${c.glow}`,
+          userSelect:"none",
+          willChange:"transform, opacity",
+          opacity: popped ? 1 : 0,
+          transform: popped ? "scale(1)" : "scale(0.7)",
+          transition:"opacity 0.22s ease, transform 0.35s cubic-bezier(0.34,1.56,0.64,1)"
+        }}>
+          <span style={{fontSize:"13px",lineHeight:1}}>{c.emoji}</span>
+          <span>{c.label}</span>
+        </div>
+      )
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       ACTION BUTTONS  — glow on hover, scale(0.97) on active, ripple
+    ══════════════════════════════════════════════════════════════════════ */
+    const BTN_CFG = {
+      proceed: { label:"Proceed Anyway",       color:"#374151", bg:"#f3f4f6", border:"#d1d5db", hoverBg:"#e5e7eb", icon:"→",      hoverGlow:"0 0 0 rgba(0,0,0,0)"            },
+      caution: { label:"Proceed with Caution", color:"#92400e", bg:"#fffbeb", border:"#fcd34d", hoverBg:"#fef3c7", icon:"⚡",     hoverGlow:"0 0 14px rgba(202,138,4,0.45)"   },
+      leave:   { label:"Leave This Page",      color:"#ffffff", bg:"#dc2626", border:"#dc2626", hoverBg:"#b91c1c", icon:"← Exit", hoverGlow:"0 0 16px rgba(220,38,38,0.55)"   }
+    }
+    const FEEDBACK_CFG = {
+      safe:    { label:"✓ Mark as Safe",   color:"#15803d", bg:"#f0fdf4", border:"#86efac", hoverBg:"#dcfce7", hoverGlow:"0 0 12px rgba(22,163,74,0.38)"  },
+      threat:  { label:"✗ Confirm Threat", color:"#b91c1c", bg:"#fef2f2", border:"#fca5a5", hoverBg:"#fee2e2", hoverGlow:"0 0 12px rgba(220,38,38,0.38)"  }
+    }
+
+    function PrimaryBtn({ cfg, onClick }) {
+      const [hov, setHov] = useState(false)
+      const [pressed, setPressed] = useState(false)
+      return (
+        <button
+          onClick={onClick}
+          onMouseEnter={() => setHov(true)}
+          onMouseLeave={() => { setHov(false); setPressed(false) }}
+          onMouseDown={() => setPressed(true)}
+          onMouseUp={() => setPressed(false)}
+          style={{
+            width:"100%", padding:"11px 16px", borderRadius:"8px",
+            border:`1.5px solid ${cfg.border}`,
+            backgroundColor: hov ? cfg.hoverBg : cfg.bg,
+            color: cfg.color, fontWeight:"700", fontSize:"14px",
+            cursor:"pointer", display:"flex", alignItems:"center",
+            justifyContent:"center", gap:"8px", fontFamily:"inherit",
+            boxShadow: hov ? cfg.hoverGlow : "none",
+            transform: pressed ? "scale(0.97)" : "scale(1)",
+            transition:"background-color 0.15s ease, box-shadow 0.15s ease, transform 0.06s ease, border-color 0.15s ease",
+            willChange:"transform, box-shadow"
+          }}
+        >
+          <span style={{fontSize:"13px"}}>{cfg.icon}</span>
+          <span>{cfg.label}</span>
+        </button>
+      )
+    }
+
+    function FeedbackBtn({ fcfg, onClick }) {
+      const [hov, setHov] = useState(false)
+      const [pressed, setPressed] = useState(false)
+      return (
+        <button
+          onClick={onClick}
+          onMouseEnter={() => setHov(true)}
+          onMouseLeave={() => { setHov(false); setPressed(false) }}
+          onMouseDown={() => setPressed(true)}
+          onMouseUp={() => setPressed(false)}
+          style={{
+            flex:1, padding:"8px 10px", borderRadius:"7px",
+            border:`1px solid ${fcfg.border}`,
+            backgroundColor: hov ? fcfg.hoverBg : fcfg.bg,
+            color: fcfg.color, fontSize:"12px", cursor:"pointer",
+            fontWeight:"600", fontFamily:"inherit",
+            boxShadow: hov ? fcfg.hoverGlow : "none",
+            transform: pressed ? "scale(0.97)" : "scale(1)",
+            transition:"background-color 0.15s ease, box-shadow 0.15s ease, transform 0.06s ease",
+            willChange:"transform, box-shadow"
+          }}
+        >
+          {fcfg.label}
+        </button>
+      )
+    }
+
+    function ActionButtons({ recommendation, onProceed, onLeave, onMarkSafe, onConfirmThreat }) {
+      const key = ["proceed","caution","leave"].includes(recommendation) ? recommendation : "caution"
+      const cfg = BTN_CFG[key]
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"16px"}}>
+          <PrimaryBtn cfg={cfg} onClick={key==="leave" ? onLeave : onProceed} />
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <div style={{flex:1,height:"1px",backgroundColor:"#e5e7eb"}}/>
+            <span style={{fontSize:"11px",color:"#9ca3af",whiteSpace:"nowrap"}}>Was this helpful?</span>
+            <div style={{flex:1,height:"1px",backgroundColor:"#e5e7eb"}}/>
+          </div>
+          <div style={{display:"flex",gap:"8px"}}>
+            <FeedbackBtn fcfg={FEEDBACK_CFG.safe}   onClick={onMarkSafe} />
+            <FeedbackBtn fcfg={FEEDBACK_CFG.threat} onClick={onConfirmThreat} />
+          </div>
+        </div>
+      )
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       THREAT CARD
+       — spring entry: cubic-bezier(0.34,1.56,0.64,1)
+       — exit: translateY(20) + opacity 0, 250ms
+       — header shimmer overlay
+       — hover lift handled by .card-wrapper CSS
+    ══════════════════════════════════════════════════════════════════════ */
+    const HDR_GRADIENT = {
+      safe:     "linear-gradient(135deg,#15803d,#16a34a)",
+      low:      "linear-gradient(135deg,#a16207,#ca8a04)",
+      medium:   "linear-gradient(135deg,#c2410c,#ea580c)",
+      high:     "linear-gradient(135deg,#b91c1c,#dc2626)",
+      critical: "linear-gradient(135deg,#7f1d1d,#991b1b)"
+    }
+    const ACCENT = { safe:"#16a34a",low:"#ca8a04",medium:"#ea580c",high:"#dc2626",critical:"#7f1d1d" }
+
+    function ThreatCard({ verdict, currentURL, onClose, onMarkSafe, onConfirmThreat, staticMode }) {
+      const [vis,  setVis]  = useState(false)
+      const [exit, setExit] = useState(false)
+
+      useEffect(() => {
+        const t = requestAnimationFrame(() => setVis(true))
+        return () => cancelAnimationFrame(t)
+      }, [])
+
+      const dismiss = (cb) => {
+        if (staticMode) { if(cb)cb(); if(onClose)onClose(); return }
+        setExit(true)
+        setTimeout(() => { setVis(false); if(cb)cb(); if(onClose)onClose() }, 260)
+      }
+
+      const handleLeave   = () => dismiss(() => window.history.back())
+      const handleProceed = () => dismiss()
+
+      let domain = currentURL
+      try { domain = new URL(currentURL).hostname } catch(_) {}
+
+      const accent = ACCENT[verdict.riskLevel] || ACCENT.medium
+      const hdr    = HDR_GRADIENT[verdict.riskLevel] || HDR_GRADIENT.medium
+
+      const posStyle = staticMode
+        ? { position:"absolute", bottom:"12px", right:"12px", left:"12px", width:"auto" }
+        : { position:"fixed", bottom:"24px", right:"24px", width:"370px" }
+
+      // Card enter: spring; exit: ease-in 250ms
+      const cardTransform = exit ? "translateY(20px) scale(0.97)" : vis ? "translateY(0) scale(1)" : "translateY(24px) scale(0.96)"
+      const cardOpacity   = exit ? 0 : vis ? 1 : 0
+      const cardTransition = exit
+        ? "opacity 0.25s ease-in, transform 0.25s ease-in"
+        : "opacity 0.38s cubic-bezier(0.34,1.56,0.64,1), transform 0.42s cubic-bezier(0.34,1.56,0.64,1)"
+
+      return (
+        <div style={{
+          ...posStyle,
+          backgroundColor:"#ffffff",
+          borderRadius:"14px",
+          boxShadow:"0 20px 60px rgba(0,0,0,0.2),0 4px 16px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.05)",
+          zIndex:2147483647,
+          overflow:"hidden",
+          fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+          borderLeft:`4px solid ${accent}`,
+          opacity: cardOpacity,
+          transform: cardTransform,
+          transition: cardTransition,
+          willChange:"transform, opacity"
+        }}>
+
+          {/* ── Header with shimmer overlay ── */}
+          <div style={{ position:"relative", background:hdr, padding:"12px 16px",
+            display:"flex", alignItems:"center", justifyContent:"space-between",
+            transition:"background 0.3s ease" }}>
+            {/* Shimmer strip */}
+            <div style={{
+              position:"absolute", top:0, left:"-60%", width:"40%", height:"100%",
+              background:"linear-gradient(105deg,transparent 20%,rgba(255,255,255,0.12) 50%,transparent 80%)",
+              animation:"shimmer-slide 3s ease-in-out infinite",
+              pointerEvents:"none"
+            }}/>
+            <style>{`
+              @keyframes shimmer-slide {
+                0%   { left:-60%; }
+                50%  { left:120%; }
+                100% { left:120%; }
+              }
+            `}</style>
+            <div style={{display:"flex",alignItems:"center",gap:"8px",position:"relative"}}>
+              <span style={{fontSize:"20px",lineHeight:1}}>🛡️</span>
+              <div>
+                <div style={{color:"white",fontWeight:"700",fontSize:"14px",letterSpacing:"0.01em"}}>Sentrio Alert</div>
+                <div style={{color:"rgba(255,255,255,0.72)",fontSize:"11px"}}>Threat detected on this page</div>
+              </div>
+            </div>
+            <button onClick={handleProceed} style={{
+              position:"relative", background:"rgba(255,255,255,0.15)", border:"none",
+              color:"white", cursor:"pointer", fontSize:"18px", lineHeight:1,
+              borderRadius:"6px", width:"28px", height:"28px",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              transition:"background 0.15s ease"
+            }}
+            onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.28)"}
+            onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.15)"}>
+              ×
+            </button>
+          </div>
+
+          {/* ── Body ── */}
+          <div style={{padding:"16px"}}>
+            {/* Badge row — badge pops in 150ms after card */}
+            <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px",flexWrap:"wrap"}}>
+              <RiskBadge riskLevel={verdict.riskLevel} delay={150} />
+              {verdict.confidence && (
+                <span style={{
+                  fontSize:"10px", fontWeight:"600", padding:"2px 9px", borderRadius:"999px",
+                  backgroundColor: verdict.confidence==="high" ? "#dcfce7" : verdict.confidence==="medium" ? "#fef9c3" : "#f3f4f6",
+                  color:           verdict.confidence==="high" ? "#15803d" : verdict.confidence==="medium" ? "#a16207" : "#6b7280",
+                  letterSpacing:"0.04em", textTransform:"uppercase",
+                  opacity: vis ? 1 : 0, transform: vis ? "scale(1)" : "scale(0.85)",
+                  transition:"opacity 0.3s ease 0.22s, transform 0.3s cubic-bezier(0.34,1.56,0.64,1) 0.22s"
+                }}>
+                  {verdict.confidence} confidence
+                </span>
+              )}
+              {verdict.isFallback && <span style={{fontSize:"10px",color:"#9ca3af",fontStyle:"italic"}}>(offline)</span>}
+            </div>
+
+            {/* Tactic */}
+            <div style={{fontSize:"13px",fontWeight:"700",color:"#111827",marginBottom:"8px",display:"flex",alignItems:"center",gap:"6px"}}>
+              <span style={{color:accent}}>⚑</span>
+              <span>Detected: {verdict.tactic}</span>
+            </div>
+
+            {/* Explanation */}
+            <div style={{
+              fontSize:"13px", color:"#4b5563", lineHeight:"1.6",
+              padding:"10px 12px", backgroundColor:"#f8fafc",
+              borderRadius:"8px", border:"1px solid #e5e7eb", marginBottom:"10px"
+            }}>
+              {verdict.explanation}
+            </div>
+
+            {/* URL */}
+            <div style={{fontSize:"11px",color:"#9ca3af",wordBreak:"break-all",display:"flex",alignItems:"flex-start",gap:"4px"}}>
+              <span style={{flexShrink:0,marginTop:"1px"}}>🔗</span>
+              <span>{domain}</span>
+            </div>
+
+            <ActionButtons
+              recommendation={verdict.recommendation}
+              onProceed={handleProceed}
+              onLeave={handleLeave}
+              onMarkSafe={() => dismiss(onMarkSafe)}
+              onConfirmThreat={() => dismiss(onConfirmThreat)}
+            />
+          </div>
+
+          {/* Footer */}
+          <div style={{padding:"8px 16px",borderTop:"1px solid #f3f4f6",fontSize:"10px",color:"#d1d5db",textAlign:"right"}}>
+            Sentrio · Mora Vortex · Aurora 2026
+          </div>
+        </div>
+      )
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       SAFE CARD  — scale from 0.95→1.0 on enter; scale + fade on leave
+    ══════════════════════════════════════════════════════════════════════ */
+    function SafeCard({ domain, staticMode }) {
+      const [phase, setPhase] = useState("entering") // entering | visible | exiting
+      useEffect(() => {
+        const t1 = setTimeout(() => setPhase("visible"), 40)
+        const t2 = setTimeout(() => setPhase("exiting"), 3000)
+        return () => { clearTimeout(t1); clearTimeout(t2) }
+      }, [])
+
+      if (staticMode) return <StaticSafeCard domain={domain} />
+
+      const entering = phase === "entering"
+      const exiting  = phase === "exiting"
+
+      return (
+        <div style={{
+          position:"fixed", bottom:"24px", right:"24px",
+          backgroundColor:"#f0fdf4", border:"1.5px solid #86efac",
+          borderLeft:"4px solid #16a34a", borderRadius:"10px",
+          padding:"12px 18px", display:"flex", alignItems:"center", gap:"12px",
+          zIndex:2147483647, fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+          boxShadow: exiting ? "none" : "0 8px 24px rgba(22,163,74,0.18),0 2px 8px rgba(0,0,0,0.06)",
+          minWidth:"220px",
+          opacity:   entering ? 0 : exiting ? 0 : 1,
+          transform: entering ? "translateY(14px) scale(0.95)" : exiting ? "translateY(10px) scale(0.95)" : "translateY(0) scale(1)",
+          transition: exiting
+            ? "opacity 0.35s ease-in, transform 0.35s ease-in, box-shadow 0.35s ease"
+            : "opacity 0.38s cubic-bezier(0.34,1.56,0.64,1), transform 0.42s cubic-bezier(0.34,1.56,0.64,1)",
+          pointerEvents: exiting ? "none" : "auto",
+          willChange:"transform, opacity"
+        }}>
+          <div style={{
+            width:"36px", height:"36px", borderRadius:"50%",
+            backgroundColor:"#dcfce7", display:"flex", alignItems:"center",
+            justifyContent:"center", flexShrink:0, fontSize:"18px"
+          }}>✅</div>
+          <div>
+            <div style={{fontSize:"13px",fontWeight:"700",color:"#15803d"}}>Sentrio: Safe</div>
+            <div style={{fontSize:"11px",color:"#6b7280",marginTop:"1px"}}>{domain}</div>
+          </div>
+          <div style={{marginLeft:"auto",fontSize:"20px",opacity:0.28}}>🛡️</div>
+        </div>
+      )
+    }
+
+    function StaticSafeCard({ domain }) {
+      return (
+        <div style={{
+          position:"absolute", bottom:"10px", left:"10px", right:"10px",
+          backgroundColor:"#f0fdf4", border:"1.5px solid #86efac",
+          borderLeft:"4px solid #16a34a", borderRadius:"10px",
+          padding:"10px 14px", display:"flex", alignItems:"center", gap:"10px",
+          fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+          boxShadow:"0 4px 14px rgba(22,163,74,0.12)"
+        }}>
+          <div style={{width:"32px",height:"32px",borderRadius:"50%",backgroundColor:"#dcfce7",
+            display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"16px"}}>✅</div>
+          <div>
+            <div style={{fontSize:"12px",fontWeight:"700",color:"#15803d"}}>Sentrio: Safe</div>
+            <div style={{fontSize:"10px",color:"#6b7280"}}>{domain}</div>
+          </div>
+          <div style={{marginLeft:"auto",fontSize:"16px",opacity:0.25}}>🛡️</div>
+        </div>
+      )
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       LIVE OVERLAY  — renders ThreatCard or SafeCard for trigger buttons
+    ══════════════════════════════════════════════════════════════════════ */
+    function LiveOverlay() {
+      const [state, setState] = useState({ type:null, verdict:null, url:null })
+      useEffect(() => {
+        const handler = msg => {
+          if (msg.type==="SHOW_VERDICT") setState({ type:"threat", verdict:msg.payload, url:window.location.href })
+          if (msg.type==="SHOW_SAFE")    setState({ type:"safe",   verdict:null,         url:msg.payload?.url || window.location.href })
+        }
+        window.chrome.runtime.onMessage.addListener(handler)
+        return () => window.chrome.runtime.onMessage.removeListener(handler)
+      }, [])
+      const close = () => setState({ type:null, verdict:null, url:null })
+
+      if (state.type==="threat" && state.verdict) {
+        return <ThreatCard verdict={state.verdict} currentURL={state.url||window.location.href}
+          onClose={close} onMarkSafe={close} onConfirmThreat={close} />
+      }
+      if (state.type==="safe") {
+        let d = state.url||"hnb.lk"
+        try { d = new URL(d).hostname } catch(_) {}
+        return <SafeCard domain={d} />
+      }
+      return null
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       RENDER ALL 5 THREAT CARD PREVIEWS
+    ══════════════════════════════════════════════════════════════════════ */
+    const ALL_VERDICTS = [
+      { riskLevel:"safe",     tactic:"Verified Banking Domain",             explanation:"This page belongs to the official HNB Bank domain. All security checks passed. SSL certificate is valid.",                                                                   recommendation:"proceed", confidence:"high",   isFallback:false },
+      { riskLevel:"low",      tactic:"Minor Domain Inconsistency",          explanation:"The domain closely resembles an official bank but has a slightly unusual subdomain. Proceed carefully.",                                                                     recommendation:"caution", confidence:"medium", isFallback:false },
+      { riskLevel:"medium",   tactic:"Suspicious SSL Certificate",          explanation:"This site uses a certificate issued 12 days ago and mimics ComBank Online Banking. Verify the URL before entering credentials.",                                            recommendation:"caution", confidence:"medium", isFallback:false },
+      { riskLevel:"high",     tactic:"Lookalike Domain + New Registration", explanation:"Domain hnb-secure-login.net was registered 3 days ago and mirrors HNB Bank's site. Do not enter credentials.",                                                             recommendation:"leave",   confidence:"high",   isFallback:false },
+      { riskLevel:"critical", tactic:"Typosquatting + Authority Impersonation", explanation:"This page actively impersonates HNB Bank using a cloned login form. The domain was registered 2 days ago. Leave immediately.",                                          recommendation:"leave",   confidence:"high",   isFallback:false }
+    ]
+    const TEST_URLS = {
+      safe:"https://hnb.lk/personal/accounts", low:"https://online.hnb.lk.savings-portal.com/login",
+      medium:"https://combank-online.lk/secure/login", high:"https://hnb-secure-login.net/auth",
+      critical:"https://hnb-secure.net/login?redirect=accounts"
+    }
+
+    // Static preview grid
+    ALL_VERDICTS.forEach((v, i) => {
+      const wrapper = document.createElement("div")
+      wrapper.className = "card-wrapper"
+      wrapper.setAttribute("data-risk", v.riskLevel)
+
+      const label = document.createElement("div")
+      label.className = "card-label"
+      label.textContent = v.riskLevel.toUpperCase()
+      wrapper.appendChild(label)
+
+      const mount = document.createElement("div")
+      mount.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"
+      wrapper.appendChild(mount)
+
+      document.getElementById("threat-cards-grid").appendChild(wrapper)
+
+      const root = ReactDOM.createRoot(mount)
+      root.render(React.createElement(ThreatCard, {
+        verdict: v,
+        currentURL: TEST_URLS[v.riskLevel],
+        onClose: ()=>{}, onMarkSafe: ()=>{}, onConfirmThreat: ()=>{},
+        staticMode: true
+      }))
+    })
+
+    // Static SafeCard preview
+    const safeRoot = ReactDOM.createRoot(document.getElementById("safe-card-mount"))
+    safeRoot.render(React.createElement(SafeCard, { domain:"hnb.lk", staticMode:true }))
+
+    // Live overlay
+    const liveRoot = ReactDOM.createRoot(document.getElementById("sentrio-live-overlay"))
+    liveRoot.render(React.createElement(LiveOverlay))
+  </script>
+
+</body>
+</html>

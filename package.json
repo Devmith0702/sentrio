@@ -1,0 +1,24 @@
+{
+  "name": "sentrio",
+  "version": "1.0.0",
+  "description": "Sentrio — AI-powered fake banking site detector for Sri Lankan users",
+  "private": true,
+  "scripts": {
+    "build:popup": "npx parcel build src/ui/popup.html --dist-dir dist/ui --no-source-maps",
+    "build:overlay": "npx parcel build src/ui/overlay-inject.js --dist-dir dist/ui --no-source-maps",
+    "build": "npm run build:popup && npm run build:overlay",
+    "watch": "npx parcel watch src/ui/popup.html src/ui/overlay-inject.js --dist-dir dist/ui",
+    "build:test": "npx parcel build src/ui/test.html --dist-dir dist/test --no-source-maps"
+  },
+  "devDependencies": {
+    "parcel": "^2.12.0"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "browserslist": "> 0.5%, last 2 Chrome versions, not dead",
+  "@parcel/transformer-js": {
+    "inlineFS": false
+  }
+}

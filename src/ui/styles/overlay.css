@@ -1,0 +1,60 @@
+/* src/ui/styles/overlay.css
+ * Shared styles for the Sentrio overlay system.
+ * Imported by overlay-inject.js (Parcel picks it up automatically).
+ * Most component styles are inline (CSP-safe), but animation keyframes
+ * and the root isolation reset live here.
+ */
+
+/* ── Root container ─────────────────────────────────────────────────────── */
+#sentrio-overlay-root {
+  all: initial;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#sentrio-overlay-root > * {
+  pointer-events: auto;
+}
+
+/* ── Entrance animation ──────────────────────────────────────────────────── */
+@keyframes sentrio-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── Exit animation ──────────────────────────────────────────────────────── */
+@keyframes sentrio-slide-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+}
+
+/* ── Utility: visually hidden (for screen-reader text) ──────────────────── */
+.sentrio-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
