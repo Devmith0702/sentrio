@@ -1,19 +1,16 @@
 // src/ai-agent/apiClient.js
-// Handles all AI API communication for Sentrio (Gemini during dev, Claude for Aurora demo)
+// Handles all AI API communication for Sentrio.
+// Provider is controlled by CONFIG.PROVIDER: "groq" | "gemini" | "claude"
 
 const { CONFIG } = require("./config")
 
 // ── Fetch with timeout ────────────────────────────────────────────────────────
-// Wraps the native fetch with an AbortController so requests don't hang forever.
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal
-    })
+    const response = await fetch(url, { ...options, signal: controller.signal })
     clearTimeout(timer)
     return response
   } catch (error) {
@@ -25,22 +22,53 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-// ── Gemini API (free tier — use during development) ───────────────────────────
+// ── Groq API (OpenAI-compatible — default free provider) ─────────────────────
+async function callGroq(systemPrompt, userPrompt) {
+  const body = {
+    model: CONFIG.GROQ_MODEL,
+    max_tokens: CONFIG.MAX_TOKENS,
+    temperature: 0.1,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user",   content: userPrompt }
+    ]
+  }
+
+  const response = await fetchWithTimeout(
+    CONFIG.GROQ_ENDPOINT,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${CONFIG.GROQ_API_KEY}`
+      },
+      body: JSON.stringify(body)
+    },
+    CONFIG.TIMEOUT_MS
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Groq API error ${response.status}: ${errorText}`)
+  }
+
+  const data = await response.json()
+  return data.choices[0].message.content
+}
+
+// ── Gemini API (backup free option) ──────────────────────────────────────────
 async function callGemini(systemPrompt, userPrompt) {
   const url = `${CONFIG.GEMINI_ENDPOINT}?key=${CONFIG.GEMINI_API_KEY}`
 
   const body = {
     contents: [
       {
-        parts: [
-          // Gemini doesn't have a separate system role, so we prefix it to the user turn
-          { text: systemPrompt + "\n\n" + userPrompt }
-        ]
+        parts: [{ text: systemPrompt + "\n\n" + userPrompt }]
       }
     ],
     generationConfig: {
       maxOutputTokens: CONFIG.MAX_TOKENS,
-      temperature: 0.1  // Low temperature = consistent, structured JSON output
+      temperature: 0.1
     }
   }
 
@@ -63,15 +91,13 @@ async function callGemini(systemPrompt, userPrompt) {
   return data.candidates[0].content.parts[0].text
 }
 
-// ── Claude API (paid — use for final Aurora demo only) ────────────────────────
+// ── Claude API (Aurora demo only) ────────────────────────────────────────────
 async function callClaude(systemPrompt, userPrompt) {
   const body = {
     model: CONFIG.CLAUDE_MODEL,
     max_tokens: CONFIG.MAX_TOKENS,
     system: systemPrompt,
-    messages: [
-      { role: "user", content: userPrompt }
-    ]
+    messages: [{ role: "user", content: userPrompt }]
   }
 
   const response = await fetchWithTimeout(
@@ -97,12 +123,13 @@ async function callClaude(systemPrompt, userPrompt) {
   return data.content[0].text
 }
 
-// ── Main entry point — routes to whichever AI is configured ───────────────────
+// ── Main entry point ──────────────────────────────────────────────────────────
 async function callAI(systemPrompt, userPrompt) {
-  if (CONFIG.USE_CLAUDE) {
-    return await callClaude(systemPrompt, userPrompt)
-  } else {
-    return await callGemini(systemPrompt, userPrompt)
+  switch (CONFIG.PROVIDER) {
+    case "groq":   return await callGroq(systemPrompt, userPrompt)
+    case "gemini": return await callGemini(systemPrompt, userPrompt)
+    case "claude": return await callClaude(systemPrompt, userPrompt)
+    default:       throw new Error(`Unknown AI provider: "${CONFIG.PROVIDER}"`)
   }
 }
 
