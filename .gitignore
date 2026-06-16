@@ -1,1 +1,21 @@
 Devmith.md
+
+# API keys — never commit
+src/ai-agent/config.js
+
+# Environment variables
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+
+# macOS metadata
+.DS_Store
