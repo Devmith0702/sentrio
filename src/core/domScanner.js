@@ -66,12 +66,23 @@ function scanDOM() {
   const forms = document.querySelectorAll("form")
   const formFindings = []
   forms.forEach(form => {
-    const action = form.getAttribute("action") || ""
-    if (action && !action.startsWith("/") && !action.includes(window.location.hostname)) {
-      formFindings.push({
-        type: "suspicious_form_action",
-        action: action
-      })
+    const action = form.getAttribute("action")
+    if (!action) return
+
+    // Resolve the action against the current page, then compare origins.
+    // Only a form posting to a DIFFERENT origin is a real exfiltration signal.
+    // Relative actions like "index", "search", "./login" resolve to the same
+    // origin and are completely benign — the old check wrongly flagged those.
+    try {
+      const resolved = new URL(action, window.location.href)
+      if (resolved.origin !== window.location.origin) {
+        formFindings.push({
+          type: "suspicious_form_action",
+          action: action
+        })
+      }
+    } catch {
+      // Unparseable action — ignore rather than flag
     }
   })
 

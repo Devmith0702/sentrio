@@ -1,8 +1,18 @@
 // src/core/content.js
 // Depends on all other src/core/ files loaded before this one via manifest.json
 
-// Temporary mock — replace when Person 3's trust-profile module is ready
+// Layer 3 (trust profile) is bundled into dist/trustProfileBundle.js and exposed
+// as the global SentrioTrust, loaded as a content script before this file.
+// Falls back to "no deviation" if the bundle isn't present, so detection never
+// breaks just because the trust layer failed to load.
 async function getProfileDeviation(domain) {
+  try {
+    if (typeof SentrioTrust !== "undefined" && SentrioTrust.getProfileDeviation) {
+      return await SentrioTrust.getProfileDeviation(domain)
+    }
+  } catch (error) {
+    console.warn("Sentrio: trust profile unavailable —", error)
+  }
   return { detected: false, details: "" }
 }
 

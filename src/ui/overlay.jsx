@@ -57,12 +57,10 @@ export function Overlay() {
     if (!state.url) return
     let domain = state.url
     try { domain = new URL(state.url).hostname } catch (_) {}
-    try {
-      chrome.runtime.sendMessage({
-        type: "MARK_SAFE",
-        payload: { domain }
-      })
-    } catch (_) {}
+    // Record to Layer 3 (runs in the page context, per-origin IndexedDB).
+    try { if (window.SentrioTrust) window.SentrioTrust.markAsSafe() } catch (_) {}
+    // Also notify the background (for logging / future global stats).
+    try { chrome.runtime.sendMessage({ type: "MARK_SAFE", payload: { domain } }) } catch (_) {}
     handleClose()
   }, [state.url, handleClose])
 
@@ -70,12 +68,8 @@ export function Overlay() {
     if (!state.url) return
     let domain = state.url
     try { domain = new URL(state.url).hostname } catch (_) {}
-    try {
-      chrome.runtime.sendMessage({
-        type: "CONFIRM_THREAT",
-        payload: { domain }
-      })
-    } catch (_) {}
+    try { if (window.SentrioTrust) window.SentrioTrust.confirmThreat() } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: "CONFIRM_THREAT", payload: { domain } }) } catch (_) {}
     handleClose()
   }, [state.url, handleClose])
 

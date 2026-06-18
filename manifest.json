@@ -18,19 +18,21 @@
     {
       "matches": ["<all_urls>"],
       "js": [
+        "dist/ui/overlay-inject.js",
         "src/core/bankRegistry.js",
         "src/core/urlAnalyser.js",
         "src/core/homoglyphDetector.js",
         "src/core/subdomainChecker.js",
         "src/core/domScanner.js",
         "src/core/signalBuilder.js",
+        "dist/trustProfileBundle.js",
         "src/core/content.js"
       ],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_popup": "src/ui/popup.html",
+    "default_popup": "dist/ui/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
