@@ -10,6 +10,10 @@
 
 // API key + provider settings come from the gitignored config (not committed here).
 importScripts("src/ai-agent/config.js")
+// Layer 2.5 grounding. grounding.js has NO internal require()s, so importing it
+// here exposes its functions (groundImpersonation, groundingToPromptLines) as
+// worker globals directly — no inline mirror needed.
+importScripts("src/ai-agent/grounding.js")
 // config.js declares its own top-level `const CONFIG`, which shares global scope
 // with this worker via importScripts — so we read it under a different name.
 const CFG = self.SENTRIO_CONFIG
@@ -18,7 +22,8 @@ const VALID_RISK = ["safe", "low", "medium", "high", "critical"]
 const VALID_REC  = ["proceed", "caution", "leave"]
 
 // ── Prompt builder (mirrors src/ai-agent/promptBuilder.js) ──────────────────
-function buildPrompt(s) {
+// `grounding` is the optional evidence object from groundImpersonation().
+function buildPrompt(s, grounding) {
   const findings = []
   if (s.isBankImpersonation)
     findings.push(`- The page claims to be "${s.bankClaimed}" but the registered domain "${s.registeredDomain}" is NOT in the verified Sri Lankan bank registry.`)
@@ -32,6 +37,10 @@ function buildPrompt(s) {
     findings.push(`- A login form submits to an external domain: ${s.suspiciousFormActions.map(f => f.action).join(", ")}`)
   if (s.profileDeviation && s.profileDeviation.detected)
     findings.push(`- This site deviates from the user's trusted profile: ${s.profileDeviation.details}`)
+
+  // Grounded evidence retrieved from trusted sources (official site + RDAP).
+  for (const line of groundingToPromptLines(grounding)) findings.push(line)
+
   if (!findings.length)
     findings.push("- No specific signal identified, but the page was flagged for review.")
 
@@ -40,7 +49,12 @@ function buildPrompt(s) {
     `Analyse the evidence and return a security verdict.\n` +
     `Rules: respond with ONLY a valid JSON object, no markdown, no commentary. ` +
     `Write the explanation in simple English for a non-technical user. ` +
-    `Base the verdict strictly on the evidence given.`
+    `Base the verdict strictly on the evidence given. ` +
+    `IMPORTANT: when judging whether a domain belongs to a bank, rely ONLY on the ` +
+    `retrieved evidence above (official-site cross-reference, domain age). Do NOT ` +
+    `use your own memory of which domains belong to which banks — it may be wrong. ` +
+    `If the official site verifiably references the domain, lower the risk; if the ` +
+    `domain is newly registered and unverified, raise it.`
 
   const userPrompt =
     `Analyse this suspicious website and return a verdict.\n\n` +
@@ -108,7 +122,15 @@ function fallbackVerdict() {
 async function analyseThreats(signals) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return fallbackVerdict()
   try {
-    const { systemPrompt, userPrompt } = buildPrompt(signals)
+    // Only spend grounding fetches when the page actually claims to be a bank we
+    // can't verify — that's the case the registry gets wrong. Failures inside
+    // groundImpersonation are swallowed there and just yield {grounded:false}.
+    let grounding = null
+    if (signals.isBankImpersonation) {
+      grounding = await groundImpersonation(signals.registeredDomain)
+      console.log("Sentrio: grounding evidence", grounding)
+    }
+    const { systemPrompt, userPrompt } = buildPrompt(signals, grounding)
     const raw = await callGroq(systemPrompt, userPrompt)
     return parseResponse(raw)
   } catch (e) {

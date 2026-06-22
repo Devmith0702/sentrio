@@ -340,6 +340,164 @@ async function testMessaging() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// SECTION 2.5 — Evidence grounding (Layer 2.5) for bank impersonation
+// ════════════════════════════════════════════════════════════════════════════
+
+async function testGrounding() {
+  console.log("\n╔══════════════════════════════════════╗")
+  console.log("║  Grounding — official-site + RDAP     ║")
+  console.log("╚══════════════════════════════════════╝\n")
+
+  try { delete require.cache[require.resolve("./src/ai-agent/grounding")] } catch {}
+  const {
+    identifyClaimedBank, groundImpersonation, groundingToPromptLines
+  } = require("./src/ai-agent/grounding")
+
+  // A fetch mock that routes by URL: official bank site, RDAP, anything else.
+  function makeFetch({ officialHtml = "", officialOk = true, regDate = null }) {
+    return async (url) => {
+      if (url.includes("rdap.org")) {
+        return regDate
+          ? { ok: true, status: 200, json: async () => ({ events: [{ eventAction: "registration", eventDate: regDate }] }) }
+          : { ok: false, status: 404, json: async () => ({}) }
+      }
+      // official bank homepage
+      return { ok: officialOk, status: officialOk ? 200 : 503, text: async () => officialHtml }
+    }
+  }
+
+  await test("identifyClaimedBank: maps keyword in suspect domain → official .lk", () => {
+    assert(identifyClaimedBank("boc-secure-login.com").officialDomain === "boc.lk", "boc → boc.lk")
+    assert(identifyClaimedBank("hatton-verify.xyz").officialDomain === "hnb.lk", "hatton → hnb.lk")
+    assert(identifyClaimedBank("totally-unrelated.com") === null, "no bank keyword → null")
+  })
+
+  await test("groundImpersonation: official site references suspect → confirmed property", async () => {
+    const fetchImpl = makeFetch({
+      officialHtml: `<a href="https://boccards.lk/promo">Cards</a>`,
+      regDate: "2010-01-01T00:00:00Z"
+    })
+    const g = await groundImpersonation("boccards.lk", { fetch: fetchImpl, now: Date.UTC(2026, 0, 1) })
+    assert(g.grounded === true, "should be grounded (boc keyword)")
+    assert(g.claimedBank === "Bank of Ceylon")
+    assert(g.officialReachable === true)
+    assert(g.suspectReferencedByOfficial === true, "official site links the suspect domain")
+    assert(g.suspectDomainAgeDays > 5000, "established domain age from RDAP")
+    const lines = groundingToPromptLines(g)
+    assert(lines.some(l => l.includes("VERIFIED FROM TRUSTED SOURCE")), "prompt line confirms it")
+  })
+
+  await test("groundImpersonation: official site does NOT reference suspect + new domain", async () => {
+    const fetchImpl = makeFetch({
+      officialHtml: `<a href="https://boc.lk/login">Login</a>`,   // no mention of suspect
+      regDate: "2026-05-20T00:00:00Z"                              // ~12 days before 'now'
+    })
+    const g = await groundImpersonation("boc-secure-login.com", { fetch: fetchImpl, now: Date.UTC(2026, 5, 1) })
+    assert(g.suspectReferencedByOfficial === false, "suspect not referenced")
+    assert(g.suspectDomainAgeDays !== null && g.suspectDomainAgeDays < 90, "new domain age")
+    const lines = groundingToPromptLines(g)
+    assert(lines.some(l => l.includes("does NOT reference")), "absence noted, not proof of guilt")
+    assert(lines.some(l => l.includes("newly-registered")), "new-domain line present")
+  })
+
+  await test("groundImpersonation: brand name with separators counts as a reference (sampathvishwa)", async () => {
+    // Regression: sampath.lk refers to its portal as "Sampath-Vishwa" / .sampath-vishwa
+    // and never writes the literal "sampathvishwa.com". The label match must still confirm.
+    const fetchImpl = makeFetch({
+      officialHtml: `<div class="sampath-vishwa"><a href="/online-banking?section=Sampath-Vishwa-Retail">Login</a></div>`,
+      regDate: "2001-01-01T00:00:00Z"
+    })
+    const g = await groundImpersonation("sampathvishwa.com", { fetch: fetchImpl, now: Date.UTC(2026, 0, 1) })
+    assert(g.claimedBank === "Sampath Bank")
+    assert(g.suspectReferencedByOfficial === true, "brand-name reference should be recognised")
+    // …but an attacker who adds words must NOT be confirmed by the same official HTML.
+    const g2 = await groundImpersonation("sampathvishwa-secure.com", { fetch: fetchImpl, now: Date.UTC(2026, 0, 1) })
+    assert(g2.suspectReferencedByOfficial === false, "attacker variant must not be confirmed")
+  })
+
+  await test("groundImpersonation: non-bank domain → grounded:false, no fetches", async () => {
+    let fetchCalls = 0
+    const fetchImpl = async () => { fetchCalls++; return { ok: true, text: async () => "", json: async () => ({}) } }
+    const g = await groundImpersonation("modern-living.com", { fetch: fetchImpl })
+    assert(g.grounded === false, "no bank keyword → not grounded")
+    assert(fetchCalls === 0, "should not spend any fetches when nothing to ground")
+  })
+
+  await test("groundImpersonation: official site unreachable → degrades gracefully", async () => {
+    const fetchImpl = makeFetch({ officialOk: false, regDate: null })
+    const g = await groundImpersonation("hnb-login.xyz", { fetch: fetchImpl, now: Date.now() })
+    assert(g.grounded === true, "still grounded — bank identified")
+    assert(g.officialReachable === false, "official site marked unreachable")
+    assert(g.suspectDomainAgeDays === null, "RDAP 404 → null age")
+    const lines = groundingToPromptLines(g)
+    assert(lines.some(l => l.includes("could not be reached")), "unreachable noted in prompt")
+  })
+
+  // End-to-end through the real service worker: ANALYSE_THREAT for a bank-
+  // impersonation domain must trigger grounding AND carry the retrieved evidence
+  // into the Groq prompt. We capture the request body sent to the Groq endpoint.
+  await test("background.js: grounding evidence reaches the Groq prompt", async () => {
+    let groqBody = null
+    const routingFetch = async (url, opts) => {
+      if (url.includes("groq")) {
+        groqBody = JSON.parse(opts.body)
+        return { ok: true, status: 200, text: async () => "", json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            riskLevel: "high", tactic: "Impersonation",
+            explanation: "Unverified bank domain.", recommendation: "leave"
+          }) } }]
+        }) }
+      }
+      if (url.includes("rdap.org"))
+        return { ok: true, status: 200, json: async () => ({ events: [{ eventAction: "registration", eventDate: "2026-05-25T00:00:00Z" }] }) }
+      // official boc.lk homepage — does not reference the suspect
+      return { ok: true, status: 200, text: async () => `<html><a href="/login">Login</a></html>` }
+    }
+
+    const bg = loadBackgroundSW({ fetchImpl: routingFetch })
+    bg.send(
+      { type: "ANALYSE_THREAT", payload: {
+        url: "https://boc-secure-login.com/auth",
+        registeredDomain: "boc-secure-login.com",
+        isBankImpersonation: true, bankClaimed: "BOC"
+      } },
+      { tab: { id: 7 } }
+    )
+    await new Promise(r => setTimeout(r, 80))   // grounding fetches + Groq call
+
+    assert(groqBody !== null, "Groq endpoint should have been called")
+    const userMsg = groqBody.messages.find(m => m.role === "user").content
+    assert(userMsg.includes("Bank of Ceylon"), "prompt should name the identified bank")
+    assert(userMsg.includes("boc.lk"), "prompt should include the official domain for cross-ref")
+    assert(userMsg.includes("does NOT reference"), "prompt should carry the cross-reference result")
+    assert(userMsg.includes("newly-registered"), "prompt should carry the RDAP age signal")
+
+    const verdictMsg = bg.tabMessages.find(m => m.msg.type === "SHOW_VERDICT")
+    assert(verdictMsg && verdictMsg.msg.payload.riskLevel === "high", "verdict still flows back to the tab")
+  })
+}
+
+// loadBackgroundSW is defined inside testMessaging()'s scope; lift a copy here so
+// the grounding section can drive the real worker too.
+function loadBackgroundSW({ fetchImpl } = {}) {
+  const tabMessages = []
+  let listener
+  const sandbox = vm.createContext({
+    importScripts: (p) => vm.runInContext(fs.readFileSync(p, "utf8"), sandbox),
+    fetch: fetchImpl || (async () => { throw new Error("no fetch") }),
+    navigator: { onLine: true },
+    AbortController, setTimeout, clearTimeout, console,
+    chrome: {
+      runtime: { onMessage: { addListener: (fn) => { listener = fn } }, lastError: null },
+      tabs: { sendMessage: (tabId, msg, cb) => { tabMessages.push({ tabId, msg }); if (cb) cb() } }
+    }
+  })
+  sandbox.self = sandbox
+  vm.runInContext(fs.readFileSync("background.js", "utf8"), sandbox)
+  return { send: (msg, sender) => listener(msg, sender, () => {}), tabMessages }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — Trust Profile with REAL IndexedDB (fake-indexeddb)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -551,6 +709,7 @@ async function run() {
 
   await testDomScanner()
   await testMessaging()
+  await testGrounding()
   await testRealIndexedDB()
   await testLiveAPI()
 

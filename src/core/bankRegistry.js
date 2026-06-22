@@ -21,7 +21,6 @@ const BANK_REGISTRY = {
   // bank's main .lk site. These must be listed explicitly — banks that serve
   // online banking from a subdomain (e.g. online.boc.lk) are already covered
   // because the registered domain resolves to the main entry above.
-  "sampathvishwa.com": "Sampath Bank (Sampath Vishwa online banking)"
 }
 
 function getVerifiedBank(domain) {
