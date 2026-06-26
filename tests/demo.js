@@ -28,7 +28,7 @@ const ctx = {}
 
 // ── Real Layer 2 (Groq) ─────────────────────────────────────────────────────
 Object.keys(require.cache).filter(k => k.includes("ai-agent")).forEach(k => delete require.cache[k])
-const { analyseThreats } = require("./src/ai-agent/agentCore")
+const { analyseThreats } = require("../src/ai-agent/agentCore")
 
 // ── Build threat signals the same way content.js does ───────────────────────
 function buildSignals(url, dom) {

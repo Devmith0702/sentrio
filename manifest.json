@@ -1,12 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Sentrio",
-  "version": "1.0",
+  "version": "1.0.0",
   "description": "Agentic AI protection against fake Sri Lankan bank websites",
   "permissions": [
-    "activeTab",
-    "storage",
-    "notifications"
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"

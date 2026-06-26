@@ -13,7 +13,8 @@
     "build:test": "parcel build src/ui/test.html --dist-dir dist/test --no-source-maps",
     "watch:overlay": "parcel watch src/ui/overlay-inject.js --dist-dir dist/ui",
     "watch:trust": "parcel watch src/trustProfileBundle.js --dist-dir dist",
-    "test": "node test.integration.js && node test.browser-sim.js",
+    "config:init": "node -e \"const fs=require('fs'),p='src/ai-agent/config.js';fs.existsSync(p)||fs.copyFileSync('src/ai-agent/config.example.js',p)\"",
+    "test": "node tests/test.integration.js && node tests/test.browser-sim.js && node src/trust-profile/test.js",
     "verify": "npm run build && npm test"
   },
   "dependencies": {

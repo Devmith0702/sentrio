@@ -139,22 +139,105 @@ async function analyseThreats(signals) {
   }
 }
 
+// ── Toolbar badge (per-tab status) ───────────────────────────────────────────
+// A glanceable status on the extension icon, independent of the overlay/popup.
+// "safe" doubles as the spec's silent green checkmark — no interruption, just a ✓.
+const BADGE = {
+  safe:    { text: "✓", color: "#1a7f37", title: "Sentrio: no threats detected on this page" },
+  caution: { text: "!", color: "#bf8700", title: "Sentrio: proceed with caution — open Sentrio for details" },
+  threat:  { text: "✕", color: "#cf222e", title: "Sentrio: likely threat — review the warning" },
+}
+
+function riskToBadgeState(riskLevel) {
+  switch (riskLevel) {
+    case "critical":
+    case "high":   return "threat"
+    case "medium": return "caution"
+    case "low":
+    case "safe":
+    default:       return "safe"
+  }
+}
+
+function setBadge(tabId, state) {
+  if (tabId == null || !chrome.action) return
+  const b = BADGE[state] || BADGE.safe
+  try {
+    chrome.action.setBadgeText({ tabId, text: b.text })
+    chrome.action.setBadgeBackgroundColor({ tabId, color: b.color })
+    chrome.action.setTitle({ tabId, title: b.title })
+  } catch (_) {}
+}
+
+function clearBadge(tabId) {
+  if (tabId == null || !chrome.action) return
+  try {
+    chrome.action.setBadgeText({ tabId, text: "" })
+    chrome.action.setTitle({ tabId, title: "Sentrio" })
+  } catch (_) {}
+}
+
+// Reset the badge the moment a tab starts navigating, so a previous page's status
+// never lingers on the next page (content.js re-sets it once the new page loads).
+if (chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "loading") clearBadge(tabId)
+  })
+}
+
+// ── Verdict cache ────────────────────────────────────────────────────────────
+// Avoid re-calling the AI for a domain we just analysed (page reloads, tab
+// switches, SPA churn that slips past content.js's in-page dedupe). In-memory
+// only — an MV3 service-worker restart clears it, which is fine for a short-lived
+// latency/cost cache. Keyed by registered domain; degraded fallback verdicts are
+// never cached so a transient API failure can't stick.
+const VERDICT_TTL_MS = 30 * 60 * 1000
+const verdictCache = new Map()   // domain → { verdict, expiresAt }
+
+function getCachedVerdict(domain) {
+  const hit = domain && verdictCache.get(domain)
+  if (!hit) return null
+  if (Date.now() > hit.expiresAt) { verdictCache.delete(domain); return null }
+  return hit.verdict
+}
+
+function cacheVerdict(domain, verdict) {
+  if (!domain || !verdict || verdict.isFallback) return
+  verdictCache.set(domain, { verdict, expiresAt: Date.now() + VERDICT_TTL_MS })
+}
+
+function deliverVerdict(tabId, verdict) {
+  setBadge(tabId, riskToBadgeState(verdict.riskLevel))
+  if (tabId != null) {
+    chrome.tabs.sendMessage(tabId, { type: "SHOW_VERDICT", payload: verdict }, () => void chrome.runtime.lastError)
+  }
+}
+
 // ── Message router ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab && sender.tab.id
 
   if (message.type === "ANALYSE_THREAT") {
     console.log("Sentrio: threat signals received", message.payload)
+    const domain = message.payload && message.payload.registeredDomain
+
+    const cached = getCachedVerdict(domain)
+    if (cached) {
+      console.log("Sentrio: serving cached verdict for", domain)
+      deliverVerdict(tabId, cached)
+      return   // no async work — channel can close
+    }
+
     analyseThreats(message.payload).then(verdict => {
       console.log("Sentrio: AI verdict", verdict)
-      if (tabId != null) {
-        chrome.tabs.sendMessage(tabId, { type: "SHOW_VERDICT", payload: verdict }, () => void chrome.runtime.lastError)
-      }
+      cacheVerdict(domain, verdict)
+      deliverVerdict(tabId, verdict)
     })
     return true   // keep the message channel open for the async Groq call
   }
 
   if (message.type === "PAGE_SAFE") {
+    setBadge(tabId, "safe")
     if (tabId != null) {
       chrome.tabs.sendMessage(tabId, { type: "SHOW_SAFE", payload: message.payload }, () => void chrome.runtime.lastError)
     }

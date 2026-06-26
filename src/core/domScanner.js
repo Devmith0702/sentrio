@@ -13,29 +13,45 @@ const INJECTION_KEYWORDS = [
   "override"
 ]
 
+// Subtrees that never hold rendered injection text — skipping them (and their
+// children) keeps the walk small on heavy pages.
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "SVG", "NOSCRIPT", "TEMPLATE"])
+
 function scanDOM() {
   const findings = []
 
-  const allElements = document.querySelectorAll("*")
-  allElements.forEach(el => {
-    const style = window.getComputedStyle(el)
-    const isHidden =
-      style.display === "none" ||
-      style.visibility === "hidden" ||
-      style.opacity === "0" ||
-      style.fontSize === "0px" ||
-      (style.color === style.backgroundColor && el.innerText?.trim().length > 0)
+  // Hidden-text scan. Same predicate as before — hidden AND >10 chars AND an
+  // injection keyword — but evaluated cheap-checks-first so the costly
+  // getComputedStyle() only runs for the handful of elements that actually
+  // contain an injection phrase, instead of for every element on the page.
+  const root = document.body || document.documentElement
+  if (root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: el =>
+        SKIP_TAGS.has(el.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    })
+    let el
+    while ((el = walker.nextNode())) {
+      const text = el.innerText
+      if (!text) continue
+      const trimmed = text.trim()
+      if (trimmed.length <= 10) continue
+      const lower = trimmed.toLowerCase()
+      if (!INJECTION_KEYWORDS.some(kw => lower.includes(kw))) continue
 
-    if (isHidden && el.innerText?.trim().length > 10) {
-      const text = el.innerText.trim().toLowerCase()
-      if (INJECTION_KEYWORDS.some(kw => text.includes(kw))) {
-        findings.push({
-          type: "hidden_element",
-          content: el.innerText.trim().substring(0, 200)
-        })
+      const style = window.getComputedStyle(el)
+      const isHidden =
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.opacity === "0" ||
+        style.fontSize === "0px" ||
+        (style.color === style.backgroundColor && trimmed.length > 0)
+
+      if (isHidden) {
+        findings.push({ type: "hidden_element", content: trimmed.substring(0, 200) })
       }
     }
-  })
+  }
 
   const iterator = document.createNodeIterator(
     document.body,

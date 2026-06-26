@@ -63,7 +63,7 @@ global.navigator = { onLine: true }
 
 // ─── MOCK: Layer 3 IndexedDB ────────────────────────────────────────────────
 const mockStore = {}
-const dbSetup = require("./src/trust-profile/dbSetup")
+const dbSetup = require("../src/trust-profile/dbSetup")
 dbSetup.dbGet    = async (domain)  => mockStore[domain] ? JSON.parse(JSON.stringify(mockStore[domain])) : null
 dbSetup.dbSet    = async (profile) => { mockStore[profile.domain] = JSON.parse(JSON.stringify(profile)); return profile.domain }
 dbSetup.dbGetAll = async ()        => Object.values(mockStore).map(v => JSON.parse(JSON.stringify(v)))
@@ -101,15 +101,15 @@ loadAsGlobal("src/core/subdomainChecker.js")
 loadAsGlobal("src/core/signalBuilder.js")
 
 // Layer 2
-const { analyseThreats } = require("./src/ai-agent/agentCore")
-const { buildPrompt }    = require("./src/ai-agent/promptBuilder")
-const { parseResponse, getFallbackVerdict } = require("./src/ai-agent/responseParser")
-const { handleAPIError, isNetworkAvailable } = require("./src/ai-agent/fallbackHandler")
+const { analyseThreats } = require("../src/ai-agent/agentCore")
+const { buildPrompt }    = require("../src/ai-agent/promptBuilder")
+const { parseResponse, getFallbackVerdict } = require("../src/ai-agent/responseParser")
+const { handleAPIError, isNetworkAvailable } = require("../src/ai-agent/fallbackHandler")
 
 // Layer 3
-const { markAsSafe, confirmThreat }   = require("./src/trust-profile/feedbackHandler")
-const { getProfileDeviation, getProfileSummary } = require("./src/trust-profile/profileManager")
-const { isTrusted, calculateConfidence } = require("./src/trust-profile/confidenceScorer")
+const { markAsSafe, confirmThreat }   = require("../src/trust-profile/feedbackHandler")
+const { getProfileDeviation, getProfileSummary } = require("../src/trust-profile/profileManager")
+const { isTrusted, calculateConfidence } = require("../src/trust-profile/confidenceScorer")
 
 // ─── TEST RUNNER ─────────────────────────────────────────────────────────────
 
@@ -202,6 +202,24 @@ async function testLayer1() {
     assert(homSig.shouldEscalateToAI === true, "escalates")
   })
 
+  await test("Brand homoglyph in visible text (Greek Eta in 'Ηatton') → detected", () => {
+    const r = detectBrandHomoglyphs("Ηatton National Bank — Online Banking Login")
+    assert(r.detected === true, "Greek-Eta 'Hatton' should be flagged")
+    assert(r.details[0].looksLike.toLowerCase().includes("hatton"), "deconfused token reveals the bank name")
+  })
+
+  await test("Brand homoglyph: Cyrillic Es in 'Ѕampath' → detected", () => {
+    assert(detectBrandHomoglyphs("Welcome to Ѕampath Bank").detected === true, "Cyrillic-Es 'Sampath' flagged")
+  })
+
+  await test("Brand homoglyph: plain-ASCII bank name → NOT flagged", () => {
+    assert(detectBrandHomoglyphs("Hatton National Bank").detected === false, "legitimate ASCII brand is clean")
+  })
+
+  await test("Brand homoglyph: non-Latin (Sinhala) page text → NO false positive", () => {
+    assert(detectBrandHomoglyphs("ලංකා බැංකුව මුල් පිටුව පිවිසුම").detected === false, "Sinhala text must not trip the check")
+  })
+
   await test("DOM prompt injection signal → escalates", () => {
     const sig = layer1Analyse("https://hnb.lk/login", {
       dom: {
@@ -221,6 +239,23 @@ async function testLayer1() {
     })
     assert(sig.shouldEscalateToAI === true, "profile deviation should escalate")
     assert(sig.profileDeviation.detected === true)
+  })
+
+  await test("User 'mark safe' override → suppresses escalation when nothing changed", () => {
+    // hnb-secure.xyz would normally escalate (bank impersonation + suspicious TLD),
+    // but the user previously marked this exact domain safe and no fingerprint
+    // deviation exists → respect the override and stay silent.
+    const sig = layer1Analyse("https://hnb-secure.xyz/login", {
+      profileDeviation: { detected: false, userConfirmedSafe: true, details: "Matches trusted profile" }
+    })
+    assert(sig.shouldEscalateToAI === false, "user override should suppress the warning")
+  })
+
+  await test("User 'mark safe' override does NOT apply once the page deviates", () => {
+    const sig = layer1Analyse("https://hnb-secure.xyz/login", {
+      profileDeviation: { detected: true, userConfirmedSafe: true, details: "Login form now submits elsewhere" }
+    })
+    assert(sig.shouldEscalateToAI === true, "a fingerprint deviation overrides the safe-mark")
   })
 }
 
@@ -331,9 +366,9 @@ async function testLayer2() {
     const origOnline = global.navigator.onLine
     global.navigator.onLine = false
     // reload fallbackHandler since it read navigator.onLine at call time
-    delete require.cache[require.resolve("./src/ai-agent/fallbackHandler")]
-    delete require.cache[require.resolve("./src/ai-agent/agentCore")]
-    const { analyseThreats: at } = require("./src/ai-agent/agentCore")
+    delete require.cache[require.resolve("../src/ai-agent/fallbackHandler")]
+    delete require.cache[require.resolve("../src/ai-agent/agentCore")]
+    const { analyseThreats: at } = require("../src/ai-agent/agentCore")
     const verdict = await at({ url: "http://test.com", registeredDomain: "test.com", profileDeviation: { detected: false } })
     assert(verdict.recommendation === "caution", "offline should return caution")
     global.navigator.onLine = origOnline
@@ -371,8 +406,8 @@ async function testLayer3() {
     const fp = { protocol: "https:", loginFormAction: "sampath.lk", pageTitle: "Sampath Bank" }
     for (let i = 0; i < 5; i++) await markAsSafe("sampath.lk", fp)
     // Simulate visiting with a changed form action (attacker changed it)
-    const { detectDeviation } = require("./src/trust-profile/deviationDetector")
-    const { dbGet } = require("./src/trust-profile/dbSetup")
+    const { detectDeviation } = require("../src/trust-profile/deviationDetector")
+    const { dbGet } = require("../src/trust-profile/dbSetup")
     const stored = await dbGet("sampath.lk")
     const fakeFingerprint = { protocol: "https:", loginFormAction: "evil.com", pageTitle: "Sampath Bank" }
     const result = detectDeviation(fakeFingerprint, stored)
@@ -391,13 +426,13 @@ async function testLayer3() {
   await test("IndexedDB failure → safe fallback (no crash)", async () => {
     const origGet = dbSetup.dbGet
     dbSetup.dbGet = async () => { throw new Error("IndexedDB unavailable") }
-    delete require.cache[require.resolve("./src/trust-profile/profileManager")]
-    const { getProfileDeviation: brokenGet } = require("./src/trust-profile/profileManager")
+    delete require.cache[require.resolve("../src/trust-profile/profileManager")]
+    const { getProfileDeviation: brokenGet } = require("../src/trust-profile/profileManager")
     const result = await brokenGet("crash.lk")
     assert(result.detected === false, "should not detect on DB failure")
     assert(result.details === "Trust profile unavailable")
     dbSetup.dbGet = origGet
-    delete require.cache[require.resolve("./src/trust-profile/profileManager")]
+    delete require.cache[require.resolve("../src/trust-profile/profileManager")]
   })
 }
 
@@ -465,9 +500,9 @@ async function testEndToEnd() {
 
   await test("E2E: Network offline → full pipeline degrades gracefully", async () => {
     global.navigator.onLine = false
-    delete require.cache[require.resolve("./src/ai-agent/fallbackHandler")]
-    delete require.cache[require.resolve("./src/ai-agent/agentCore")]
-    const { analyseThreats: atOffline } = require("./src/ai-agent/agentCore")
+    delete require.cache[require.resolve("../src/ai-agent/fallbackHandler")]
+    delete require.cache[require.resolve("../src/ai-agent/agentCore")]
+    const { analyseThreats: atOffline } = require("../src/ai-agent/agentCore")
     const signals = layer1Analyse("https://evil-bank.xyz/login")
     const verdict = await atOffline(signals)
     assert(verdict.recommendation === "caution", "offline should return caution fallback")

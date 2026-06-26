@@ -25,7 +25,7 @@ async function analyseThreats(threatSignals) {
     // Step 2: Build the reasoning prompt from the threat signals
     const { systemPrompt, userPrompt } = buildPrompt(threatSignals)
 
-    // Step 3: Call the AI (Gemini during dev, Claude for Aurora demo)
+    // Step 3: Call the AI (Groq by default; Gemini/Claude selectable via CONFIG.PROVIDER)
     const rawResponse = await callAI(systemPrompt, userPrompt)
 
     // Step 4: Parse and validate the AI's response into a clean verdict object

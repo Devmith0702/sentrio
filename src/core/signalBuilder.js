@@ -33,8 +33,17 @@ function buildThreatSignals(urlData, bankCheck, homoglyphResult, subdomainResult
     strongSignal ||
     (contextualSignal && bankingNexus)
 
+  // Respect a user "Mark as safe" override: once the user has explicitly trusted
+  // this domain, stay silent — UNLESS the page has since deviated from the stored
+  // fingerprint (SSL / form / title), in which case profileDeviation.detected is
+  // true and we escalate anyway. (deviationDetector sets userConfirmedSafe;
+  // confirmThreat instead forces profileDeviation.detected=true, which is a strong
+  // signal here, so a flagged domain is never silenced by this clause.)
+  const userOverrodeSafe =
+    profileDeviation.userConfirmedSafe === true && !profileDeviation.detected
+
   return {
-    shouldEscalateToAI: hasAnySignal,
+    shouldEscalateToAI: hasAnySignal && !userOverrodeSafe,
     timestamp: new Date().toISOString(),
 
     url: urlData.fullURL,

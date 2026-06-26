@@ -9,7 +9,31 @@ function detectDeviation(currentFingerprint, storedProfile) {
       visitCount: 0,
       sslMismatch: false,
       formActionMismatch: false,
+      userFlaggedThreat: false,
+      userConfirmedSafe: false,
       details: "Domain not in trust profile — first visit"
+    }
+  }
+
+  // Past user feedback for this exact domain. Carried on every result so the
+  // signal layer can act on it (re-warn / respect a safe override) — see
+  // signalBuilder.js.
+  const userFlaggedThreat = !!storedProfile.flaggedAsThreat
+  const userConfirmedSafe = !!storedProfile.userConfirmedSafe
+
+  // The user explicitly flagged this domain as a threat on a prior visit — always
+  // resurface that, regardless of trust level. (Checked before isTrusted because a
+  // user can confirm a threat on the very first visit.)
+  if (userFlaggedThreat) {
+    return {
+      detected: true,
+      knownDomain: true,
+      visitCount: storedProfile.visitCount,
+      sslMismatch: false,
+      formActionMismatch: false,
+      userFlaggedThreat: true,
+      userConfirmedSafe,
+      details: "You previously flagged this site as a threat."
     }
   }
 
@@ -20,6 +44,8 @@ function detectDeviation(currentFingerprint, storedProfile) {
       visitCount: storedProfile.visitCount,
       sslMismatch: false,
       formActionMismatch: false,
+      userFlaggedThreat: false,
+      userConfirmedSafe,
       details: `Domain seen ${storedProfile.visitCount} time(s) — not yet enough visits to establish trust baseline`
     }
   }
@@ -56,6 +82,8 @@ function detectDeviation(currentFingerprint, storedProfile) {
     visitCount: storedProfile.visitCount,
     sslMismatch: deviations.some(d => d.includes("Protocol")),
     formActionMismatch: deviations.some(d => d.includes("form")),
+    userFlaggedThreat: false,
+    userConfirmedSafe,
     details: detected
       ? deviations.join("; ")
       : `Matches trusted profile (${storedProfile.visitCount} previous visits)`

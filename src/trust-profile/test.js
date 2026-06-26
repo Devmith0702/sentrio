@@ -181,6 +181,8 @@ async function runTests() {
       visitCount: 0,
       sslMismatch: false,
       formActionMismatch: false,
+      userFlaggedThreat: false,
+      userConfirmedSafe: false,
       details: "Domain not in trust profile — first visit"
     }, "unknown domain result")
   })
@@ -243,6 +245,32 @@ async function runTests() {
     const current = { protocol: "https:", loginFormAction: "hnb.lk", pageTitle: "Completely Different Title" }
     const result = detectDeviation(current, stored)
     assert(result.detected === true, "should detect deviation")
+  })
+
+  await test("Previously flagged as threat → detected, even if not trusted", () => {
+    const stored = {
+      visitCount: 1,
+      flaggedAsThreat: true,
+      fingerprint: { protocol: "https:", loginFormAction: "x.lk", pageTitle: "X" }
+    }
+    const current = { protocol: "https:", loginFormAction: "x.lk", pageTitle: "X" }
+    const result = detectDeviation(current, stored)
+    assert(result.detected === true, "user-flagged threat should surface")
+    assert(result.userFlaggedThreat === true, "userFlaggedThreat flag carried")
+    assert(result.details.includes("previously flagged"), "explains the prior user flag")
+  })
+
+  await test("User-confirmed-safe flag is carried on a matching trusted profile", () => {
+    const stored = {
+      visitCount: 10,
+      isConsistent: true,
+      userConfirmedSafe: true,
+      fingerprint: { protocol: "https:", loginFormAction: "hnb.lk", pageTitle: "HNB" }
+    }
+    const current = { protocol: "https:", loginFormAction: "hnb.lk", pageTitle: "HNB" }
+    const result = detectDeviation(current, stored)
+    assert(result.detected === false, "no fingerprint deviation")
+    assert(result.userConfirmedSafe === true, "userConfirmedSafe carried for the override")
   })
 
   // --- Module: feedbackHandler (with mocks) ---

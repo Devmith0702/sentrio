@@ -18,6 +18,11 @@ function extractFingerprint() {
   }
 }
 
+// Chrome MV3 extensions cannot read the live TLS certificate of a page — there is
+// no webRequest security-info / cert API (that's Firefox-only). So `issuer` stays
+// null here. The TLS issuer signal is instead obtained out-of-band via Certificate
+// Transparency logs (crt.sh) in the Layer 2.5 grounding step — see
+// lookupIssuerCA() in src/ai-agent/grounding.js — and reasoned over by the AI.
 function extractSSLInfo() {
   return {
     usesHTTPS: window.location.protocol === "https:",

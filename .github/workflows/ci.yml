@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      # No real API key in CI — the live-network tests auto-skip on this flag.
+      SENTRIO_SKIP_LIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create AI config from template
+        run: npm run config:init
+
+      - name: Build extension bundles
+        run: npm run build
+
+      - name: Run test suites
+        run: npm test

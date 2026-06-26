@@ -15,6 +15,9 @@ dist/
 build/
 .parcel-cache/
 
+# Generated test artifacts (Puppeteer screenshots)
+test-results/
+
 # Logs
 *.log
 npm-debug.log*

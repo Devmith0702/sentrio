@@ -43,6 +43,17 @@ const BANK_KEYWORDS = [
 // Newer than this → treated as a phishing-leaning age signal in the prompt.
 const NEW_DOMAIN_THRESHOLD_DAYS = 90
 
+// Free / fully-automated certificate authorities. A valid HTTPS padlock from one
+// of these proves nothing about identity — anyone can get a cert for any domain
+// they control in minutes — so phishing sites use them constantly. They're ALSO
+// used by millions of legitimate sites, so this is only ever a WEAK signal that
+// the AI must weigh, never proof of phishing.
+const FREE_CAS = ["let's encrypt", "zerossl", "buypass", "cpanel", "actalis", "google trust services"]
+
+// How long to wait on crt.sh before giving up. crt.sh is a public, sometimes-slow
+// service, so we never let it stall the verdict — a timeout just yields a null CA.
+const ISSUER_LOOKUP_TIMEOUT_MS = 5000
+
 function identifyClaimedBank(domain) {
   const lower = String(domain || "").toLowerCase()
   for (const bank of BANK_KEYWORDS) {
@@ -114,6 +125,47 @@ async function lookupDomainAgeDays(suspectDomain, fetchImpl, now = Date.now()) {
   return null
 }
 
+// Pull the issuing CA's organisation out of a crt.sh "issuer_name" DN string,
+// e.g. "C=US, O=Let's Encrypt, CN=R3" → "Let's Encrypt". Falls back to the whole
+// string when there's no O= component.
+function parseIssuerOrg(issuerName) {
+  const m = /O=([^,]+)/.exec(issuerName || "")
+  if (m) return m[1].trim()
+  const raw = String(issuerName || "").trim()
+  return raw || null
+}
+
+// Look up the suspect domain's TLS issuer via Certificate Transparency logs
+// (crt.sh). Chrome MV3 extensions cannot read the live certificate of a page, so
+// CT logs are the practical way to learn who issued a domain's cert. Returns the
+// issuing CA organisation of the most recently logged certificate, or null.
+async function lookupIssuerCA(suspectDomain, fetchImpl, now = Date.now()) {
+  let timer
+  try {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null
+    if (controller) timer = setTimeout(() => controller.abort(), ISSUER_LOOKUP_TIMEOUT_MS)
+    const res = await fetchImpl(
+      `https://crt.sh/?q=${encodeURIComponent(suspectDomain)}&output=json`,
+      controller ? { signal: controller.signal } : undefined
+    )
+    if (timer) { clearTimeout(timer); timer = undefined }
+    if (!res || !res.ok) return null
+    const data = await res.json()
+    if (!Array.isArray(data) || data.length === 0) return null
+    // Most recently issued certificate wins — that's closest to what's live now.
+    let best = null
+    for (const entry of data) {
+      const t = Date.parse(entry.not_before || entry.entry_timestamp || "")
+      const score = Number.isFinite(t) ? t : -Infinity
+      if (!best || score > best.score) best = { score, entry }
+    }
+    return best ? parseIssuerOrg(best.entry.issuer_name) : null
+  } catch (_) {
+    if (timer) clearTimeout(timer)
+    return null
+  }
+}
+
 // Main entry. Returns { grounded:false } when the page doesn't actually name a
 // bank we know, otherwise an evidence object for the prompt builder.
 async function groundImpersonation(suspectDomain, deps = {}) {
@@ -124,9 +176,10 @@ async function groundImpersonation(suspectDomain, deps = {}) {
   const bank = identifyClaimedBank(suspectDomain)
   if (!bank) return { grounded: false }
 
-  const [xref, ageDays] = await Promise.all([
+  const [xref, ageDays, issuerCA] = await Promise.all([
     crossReferenceOfficialSite(bank.officialDomain, suspectDomain, fetchImpl),
     lookupDomainAgeDays(suspectDomain, fetchImpl, now),
+    lookupIssuerCA(suspectDomain, fetchImpl, now),
   ])
 
   return {
@@ -137,6 +190,7 @@ async function groundImpersonation(suspectDomain, deps = {}) {
     officialReachable: xref.officialReachable,
     suspectReferencedByOfficial: xref.suspectReferencedByOfficial,
     suspectDomainAgeDays: ageDays,
+    suspectIssuerCA: issuerCA,
   }
 }
 
@@ -162,6 +216,14 @@ function groundingToPromptLines(g) {
         : `- The suspect domain is ${g.suspectDomainAgeDays} days old, an established registration.`
     )
   }
+  if (g.suspectIssuerCA) {
+    const isFreeCA = FREE_CAS.some((ca) => g.suspectIssuerCA.toLowerCase().includes(ca))
+    lines.push(
+      isFreeCA
+        ? `- The site's TLS certificate was issued by "${g.suspectIssuerCA}", a free/automatic certificate authority anyone can obtain a cert from in minutes — so a valid HTTPS padlock here does NOT prove the site is the real ${g.claimedBank}.`
+        : `- The site's TLS certificate was issued by "${g.suspectIssuerCA}".`
+    )
+  }
   return lines
 }
 
@@ -174,6 +236,8 @@ if (typeof module !== "undefined" && module.exports) {
     officialReferencesSuspect,
     crossReferenceOfficialSite,
     lookupDomainAgeDays,
+    parseIssuerOrg,
+    lookupIssuerCA,
     groundImpersonation,
     groundingToPromptLines,
   }

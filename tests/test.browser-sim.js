@@ -243,6 +243,7 @@ async function testMessaging() {
   // drive its message listener — exercising the real wired flow.
   function loadBackgroundSW({ fetchImpl } = {}) {
     const tabMessages = []
+    const badges = {}              // tabId → last badge text set
     let listener
     const swGlobal = {}
     const sandbox = vm.createContext({
@@ -253,12 +254,18 @@ async function testMessaging() {
       AbortController, setTimeout, clearTimeout, console,
       chrome: {
         runtime: { onMessage: { addListener: (fn) => { listener = fn } }, lastError: null },
-        tabs: { sendMessage: (tabId, msg, cb) => { tabMessages.push({ tabId, msg }); if (cb) cb() } }
+        tabs: { sendMessage: (tabId, msg, cb) => { tabMessages.push({ tabId, msg }); if (cb) cb() },
+                onUpdated: { addListener: () => {} } },
+        action: {
+          setBadgeText: ({ tabId, text }) => { badges[tabId] = text },
+          setBadgeBackgroundColor: () => {},
+          setTitle: () => {}
+        }
       }
     })
     sandbox.self = sandbox          // self refers to the worker global
     vm.runInContext(fs.readFileSync("background.js", "utf8"), sandbox)
-    return { send: (msg, sender) => listener(msg, sender, () => {}), tabMessages }
+    return { send: (msg, sender) => listener(msg, sender, () => {}), tabMessages, badges }
   }
 
   await test("background.js: PAGE_SAFE message → sends SHOW_SAFE to the tab", () => {
@@ -267,6 +274,7 @@ async function testMessaging() {
     assert(bg.tabMessages.length > 0, "background should call tabs.sendMessage for PAGE_SAFE")
     assert(bg.tabMessages[0].tabId === 42, "should send to correct tab")
     assert(bg.tabMessages[0].msg.type === "SHOW_SAFE")
+    assert(bg.badges[42] === "✓", "PAGE_SAFE should set the green check badge on the tab")
   })
 
   await test("background.js: ANALYSE_THREAT → Groq verdict → SHOW_VERDICT to the tab", async () => {
@@ -289,6 +297,61 @@ async function testMessaging() {
     assert(verdictMsg, "should send SHOW_VERDICT after analysis")
     assert(verdictMsg.msg.payload.riskLevel === "critical", "verdict should carry the AI riskLevel")
     assert(verdictMsg.msg.payload.recommendation === "leave")
+    assert(bg.badges[1] === "✕", "a critical verdict should set the red threat badge on the tab")
+  })
+
+  await test("background.js: second ANALYSE_THREAT for same domain is served from cache (one AI call)", async () => {
+    let groqCalls = 0
+    const mockFetch = async (url) => {
+      if (url.includes("groq")) {
+        groqCalls++
+        return { ok: true, status: 200, text: async () => "", json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            riskLevel: "high", tactic: "Impersonation",
+            explanation: "Unverified bank domain.", recommendation: "leave"
+          }) } }]
+        }) }
+      }
+      throw new Error("unexpected fetch: " + url)
+    }
+    const bg = loadBackgroundSW({ fetchImpl: mockFetch })
+    const payload = { url: "https://evil-bank.xyz/", registeredDomain: "evil-bank.xyz" }  // no grounding (not impersonation flag)
+
+    bg.send({ type: "ANALYSE_THREAT", payload }, { tab: { id: 5 } })
+    await new Promise(r => setTimeout(r, 40))
+    bg.send({ type: "ANALYSE_THREAT", payload }, { tab: { id: 6 } })
+    await new Promise(r => setTimeout(r, 40))
+
+    assert(groqCalls === 1, `AI should be called once for a repeated domain, got ${groqCalls}`)
+    const verdicts = bg.tabMessages.filter(m => m.msg.type === "SHOW_VERDICT")
+    assert(verdicts.length === 2, "both requests should still receive a verdict")
+    assert(verdicts[1].msg.payload.riskLevel === "high", "cached verdict carries the original risk")
+    assert(bg.badges[6] === "✕", "cached path still updates the badge on the new tab")
+  })
+
+  await test("background.js: fallback verdicts are NOT cached (failure must not stick)", async () => {
+    let groqCalls = 0
+    const failThenSucceed = async (url) => {
+      if (url.includes("groq")) {
+        groqCalls++
+        if (groqCalls === 1) return { ok: false, status: 500, text: async () => "server error" }
+        return { ok: true, status: 200, text: async () => "", json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            riskLevel: "high", tactic: "Impersonation", explanation: "Bad domain.", recommendation: "leave"
+          }) } }]
+        }) }
+      }
+      throw new Error("unexpected fetch: " + url)
+    }
+    const bg = loadBackgroundSW({ fetchImpl: failThenSucceed })
+    const payload = { url: "https://flaky.xyz/", registeredDomain: "flaky.xyz" }
+
+    bg.send({ type: "ANALYSE_THREAT", payload }, { tab: { id: 8 } })   // → fallback (not cached)
+    await new Promise(r => setTimeout(r, 40))
+    bg.send({ type: "ANALYSE_THREAT", payload }, { tab: { id: 9 } })   // → real AI call again
+    await new Promise(r => setTimeout(r, 40))
+
+    assert(groqCalls === 2, `fallback must not be cached — expected a retry, got ${groqCalls} call(s)`)
   })
 
   await test("content.js: non-HTTP URL (chrome://) → exits silently", async () => {
@@ -348,18 +411,23 @@ async function testGrounding() {
   console.log("║  Grounding — official-site + RDAP     ║")
   console.log("╚══════════════════════════════════════╝\n")
 
-  try { delete require.cache[require.resolve("./src/ai-agent/grounding")] } catch {}
+  try { delete require.cache[require.resolve("../src/ai-agent/grounding")] } catch {}
   const {
     identifyClaimedBank, groundImpersonation, groundingToPromptLines
-  } = require("./src/ai-agent/grounding")
+  } = require("../src/ai-agent/grounding")
 
-  // A fetch mock that routes by URL: official bank site, RDAP, anything else.
-  function makeFetch({ officialHtml = "", officialOk = true, regDate = null }) {
+  // A fetch mock that routes by URL: official bank site, RDAP, crt.sh, anything else.
+  function makeFetch({ officialHtml = "", officialOk = true, regDate = null, issuerName = null }) {
     return async (url) => {
       if (url.includes("rdap.org")) {
         return regDate
           ? { ok: true, status: 200, json: async () => ({ events: [{ eventAction: "registration", eventDate: regDate }] }) }
           : { ok: false, status: 404, json: async () => ({}) }
+      }
+      if (url.includes("crt.sh")) {
+        return issuerName
+          ? { ok: true, status: 200, json: async () => ([{ issuer_name: issuerName, not_before: "2026-01-01T00:00:00Z" }]) }
+          : { ok: false, status: 404, json: async () => ([]) }
       }
       // official bank homepage
       return { ok: officialOk, status: officialOk ? 200 : 503, text: async () => officialHtml }
@@ -415,6 +483,40 @@ async function testGrounding() {
     assert(g2.suspectReferencedByOfficial === false, "attacker variant must not be confirmed")
   })
 
+  await test("groundImpersonation: free TLS issuer (crt.sh) → flagged as weak signal", async () => {
+    const fetchImpl = makeFetch({
+      officialHtml: `<a href="/login">Login</a>`,
+      regDate: "2026-05-20T00:00:00Z",
+      issuerName: "C=US, O=Let's Encrypt, CN=R3"
+    })
+    const g = await groundImpersonation("boc-secure-login.com", { fetch: fetchImpl, now: Date.UTC(2026, 5, 1) })
+    assert(g.suspectIssuerCA === "Let's Encrypt", "issuer org extracted from crt.sh issuer_name DN")
+    const lines = groundingToPromptLines(g)
+    assert(lines.some(l => l.includes("free/automatic certificate authority")), "free CA flagged as a weak signal")
+    assert(lines.some(l => l.includes("does NOT prove")), "padlock-is-not-proof framing present")
+  })
+
+  await test("groundImpersonation: paid/enterprise issuer reported without the free-CA caveat", async () => {
+    const fetchImpl = makeFetch({
+      officialHtml: `<a href="/login">Login</a>`,
+      regDate: "2010-01-01T00:00:00Z",
+      issuerName: "C=BE, O=GlobalSign nv-sa, CN=GlobalSign RSA OV SSL CA 2018"
+    })
+    const g = await groundImpersonation("boc-secure-login.com", { fetch: fetchImpl, now: Date.UTC(2026, 5, 1) })
+    assert(g.suspectIssuerCA === "GlobalSign nv-sa", "non-free issuer extracted")
+    const lines = groundingToPromptLines(g)
+    assert(lines.some(l => l.includes("GlobalSign")), "issuer named in prompt")
+    assert(!lines.some(l => l.includes("free/automatic")), "no free-CA caveat for a non-free issuer")
+  })
+
+  await test("groundImpersonation: crt.sh unavailable → issuer null, no issuer line", async () => {
+    const fetchImpl = makeFetch({ officialHtml: `<a>x</a>`, regDate: "2010-01-01T00:00:00Z" }) // issuerName null → crt.sh 404
+    const g = await groundImpersonation("hnb-login.xyz", { fetch: fetchImpl, now: Date.now() })
+    assert(g.suspectIssuerCA === null, "missing CT data → null issuer")
+    const lines = groundingToPromptLines(g)
+    assert(!lines.some(l => l.includes("TLS certificate")), "no issuer line when CA unknown")
+  })
+
   await test("groundImpersonation: non-bank domain → grounded:false, no fetches", async () => {
     let fetchCalls = 0
     const fetchImpl = async () => { fetchCalls++; return { ok: true, text: async () => "", json: async () => ({}) } }
@@ -450,6 +552,8 @@ async function testGrounding() {
       }
       if (url.includes("rdap.org"))
         return { ok: true, status: 200, json: async () => ({ events: [{ eventAction: "registration", eventDate: "2026-05-25T00:00:00Z" }] }) }
+      if (url.includes("crt.sh"))
+        return { ok: true, status: 200, json: async () => ([{ issuer_name: "C=US, O=Let's Encrypt, CN=R3", not_before: "2026-05-25T00:00:00Z" }]) }
       // official boc.lk homepage — does not reference the suspect
       return { ok: true, status: 200, text: async () => `<html><a href="/login">Login</a></html>` }
     }
@@ -471,6 +575,7 @@ async function testGrounding() {
     assert(userMsg.includes("boc.lk"), "prompt should include the official domain for cross-ref")
     assert(userMsg.includes("does NOT reference"), "prompt should carry the cross-reference result")
     assert(userMsg.includes("newly-registered"), "prompt should carry the RDAP age signal")
+    assert(userMsg.includes("Let's Encrypt"), "prompt should carry the crt.sh TLS issuer signal")
 
     const verdictMsg = bg.tabMessages.find(m => m.msg.type === "SHOW_VERDICT")
     assert(verdictMsg && verdictMsg.msg.payload.riskLevel === "high", "verdict still flows back to the tab")
@@ -481,6 +586,7 @@ async function testGrounding() {
 // the grounding section can drive the real worker too.
 function loadBackgroundSW({ fetchImpl } = {}) {
   const tabMessages = []
+  const badges = {}
   let listener
   const sandbox = vm.createContext({
     importScripts: (p) => vm.runInContext(fs.readFileSync(p, "utf8"), sandbox),
@@ -489,12 +595,18 @@ function loadBackgroundSW({ fetchImpl } = {}) {
     AbortController, setTimeout, clearTimeout, console,
     chrome: {
       runtime: { onMessage: { addListener: (fn) => { listener = fn } }, lastError: null },
-      tabs: { sendMessage: (tabId, msg, cb) => { tabMessages.push({ tabId, msg }); if (cb) cb() } }
+      tabs: { sendMessage: (tabId, msg, cb) => { tabMessages.push({ tabId, msg }); if (cb) cb() },
+              onUpdated: { addListener: () => {} } },
+      action: {
+        setBadgeText: ({ tabId, text }) => { badges[tabId] = text },
+        setBadgeBackgroundColor: () => {},
+        setTitle: () => {}
+      }
     }
   })
   sandbox.self = sandbox
   vm.runInContext(fs.readFileSync("background.js", "utf8"), sandbox)
-  return { send: (msg, sender) => listener(msg, sender, () => {}), tabMessages }
+  return { send: (msg, sender) => listener(msg, sender, () => {}), tabMessages, badges }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -519,10 +631,10 @@ async function testRealIndexedDB() {
     try { delete require.cache[require.resolve(m)] } catch {}
   })
 
-  const { openDatabase, dbGet, dbSet, dbGetAll } = require("./src/trust-profile/dbSetup")
-  const { markAsSafe, confirmThreat }             = require("./src/trust-profile/feedbackHandler")
-  const { getProfileSummary }                     = require("./src/trust-profile/profileManager")
-  const { isTrusted, calculateConfidence }        = require("./src/trust-profile/confidenceScorer")
+  const { openDatabase, dbGet, dbSet, dbGetAll } = require("../src/trust-profile/dbSetup")
+  const { markAsSafe, confirmThreat }             = require("../src/trust-profile/feedbackHandler")
+  const { getProfileSummary }                     = require("../src/trust-profile/profileManager")
+  const { isTrusted, calculateConfidence }        = require("../src/trust-profile/confidenceScorer")
 
   await test("openDatabase: creates IndexedDB store successfully", async () => {
     const db = await openDatabase()
@@ -631,9 +743,18 @@ async function testLiveAPI() {
     try { delete require.cache[require.resolve(m)] } catch {}
   })
 
-  const { analyseThreats } = require("./src/ai-agent/agentCore")
-  const { buildPrompt }    = require("./src/ai-agent/promptBuilder")
-  const { parseResponse }  = require("./src/ai-agent/responseParser")
+  // Skip the real-network tests when no real API key is configured (e.g. CI using
+  // the blank config.example.js template) so the suite stays green offline.
+  const { CONFIG } = require("../src/ai-agent/config")
+  const activeKey = ({ groq: CONFIG.GROQ_API_KEY, gemini: CONFIG.GEMINI_API_KEY, claude: CONFIG.CLAUDE_API_KEY })[CONFIG.PROVIDER] || ""
+  if (process.env.SENTRIO_SKIP_LIVE || !activeKey.trim() || /^YOUR_|example|placeholder/i.test(activeKey)) {
+    console.log("  ⏭  Skipping live API tests — no real API key configured (set one in src/ai-agent/config.js to run them)")
+    return
+  }
+
+  const { analyseThreats } = require("../src/ai-agent/agentCore")
+  const { buildPrompt }    = require("../src/ai-agent/promptBuilder")
+  const { parseResponse }  = require("../src/ai-agent/responseParser")
 
   await test("Live API: Gemini responds with valid verdict for bank impersonation", async () => {
     const signals = {
